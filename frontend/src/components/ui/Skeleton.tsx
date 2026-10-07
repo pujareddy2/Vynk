@@ -1,14 +1,14 @@
-import { HTMLAttributes } from "react";
+interface SkeletonProps {
+  className?: string;
+}
 
 export default function Skeleton({
   className = "",
-  ...props
-}: HTMLAttributes<HTMLDivElement>) {
+}: SkeletonProps) {
   return (
     <div
-      className={`animate-pulse rounded-xl bg-white/10 ${className}`}
       aria-hidden="true"
-      {...props}
+      className={`animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700 ${className}`}
     />
   );
 }

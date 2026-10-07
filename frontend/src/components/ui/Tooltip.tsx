@@ -1,28 +1,37 @@
 "use client";
 
-import { ReactNode, useState } from "react";
+import type { ReactNode } from "react";
+import { useState } from "react";
 
-type TooltipProps = {
-  text: string;
+interface TooltipProps {
+  content: string;
   children: ReactNode;
-};
+}
 
-export default function Tooltip({ text, children }: TooltipProps) {
-  const [visible, setVisible] = useState(false);
+export default function Tooltip({
+  content,
+  children,
+}: TooltipProps) {
+  const [isVisible, setIsVisible] = useState(false);
 
   return (
-    <div
+    <span
       className="relative inline-flex"
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
+      onMouseEnter={() => setIsVisible(true)}
+      onMouseLeave={() => setIsVisible(false)}
+      onFocus={() => setIsVisible(true)}
+      onBlur={() => setIsVisible(false)}
     >
       {children}
 
-      {visible && (
-        <div className="absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-[#11161d] px-3 py-2 text-xs text-white shadow-lg">
-          {text}
-        </div>
+      {isVisible && (
+        <span
+          role="tooltip"
+          className="absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg dark:bg-white dark:text-slate-900"
+        >
+          {content}
+        </span>
       )}
-    </div>
+    </span>
   );
 }

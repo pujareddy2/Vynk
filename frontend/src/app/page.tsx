@@ -103,7 +103,6 @@ export default function HomePage() {
     <main className="overflow-hidden bg-[#F7F6F2] text-[#172033]">
       {/* HERO */}
       <section className="relative min-h-[calc(100vh-4rem)] overflow-hidden bg-[#172033]">
-        {/* Animated background */}
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div className="absolute -right-40 -top-40 h-[34rem] w-[34rem] animate-pulse rounded-full bg-[#6C5CE7]/30 blur-3xl" />
 
@@ -254,13 +253,10 @@ export default function HomePage() {
               >
                 <div className="overflow-hidden">
                   <div className="space-y-3">
-                    {discoveries.map((item, index) => (
+                    {discoveries.map((item) => (
                       <div
                         key={item.name}
                         className="flex transform items-center gap-3 rounded-2xl bg-white/10 p-3 transition-all duration-300 hover:translate-x-2 hover:bg-white/15"
-                        style={{
-                          animationDelay: `${index * 120}ms`,
-                        }}
                       >
                         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-xl">
                           {item.icon}
@@ -286,7 +282,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Floating badge */}
+            {/* FLOATING BADGES */}
             <div className="absolute -bottom-6 -left-6 hidden animate-[float_5s_ease-in-out_infinite] rounded-2xl border border-[#F3D69C]/20 bg-[#282F42] px-5 py-4 shadow-xl sm:block">
               <p className="text-xs text-[#AEB3C0]">Vynk philosophy</p>
 

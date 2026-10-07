@@ -1,30 +1,35 @@
 "use client";
 
-import { ReactNode, useState } from "react";
+import { useState } from "react";
 
-type Tab = {
+interface Tab {
   label: string;
-  content: ReactNode;
-};
+  content: React.ReactNode;
+}
 
-type TabsProps = {
+interface TabsProps {
   tabs: Tab[];
-};
+  defaultTab?: number;
+}
 
-export default function Tabs({ tabs }: TabsProps) {
-  const [activeTab, setActiveTab] = useState(0);
+export default function Tabs({
+  tabs,
+  defaultTab = 0,
+}: TabsProps) {
+  const [activeTab, setActiveTab] = useState(defaultTab);
 
   return (
     <div className="w-full">
-      <div className="flex gap-2 border-b border-white/10">
+      <div className="flex gap-1 overflow-x-auto rounded-2xl bg-slate-100 p-1 dark:bg-slate-800">
         {tabs.map((tab, index) => (
           <button
             key={tab.label}
+            type="button"
             onClick={() => setActiveTab(index)}
-            className={`px-4 py-3 text-sm font-medium transition ${
+            className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
               activeTab === index
-                ? "border-b-2 border-white text-white"
-                : "text-gray-500 hover:text-white"
+                ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white"
+                : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
             }`}
           >
             {tab.label}
@@ -32,7 +37,9 @@ export default function Tabs({ tabs }: TabsProps) {
         ))}
       </div>
 
-      <div className="pt-6">{tabs[activeTab]?.content}</div>
+      <div className="mt-6">
+        {tabs[activeTab]?.content}
+      </div>
     </div>
   );
 }
