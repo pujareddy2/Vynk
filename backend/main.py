@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from database import check_db_connection
 
 app = FastAPI(title="Localy API")
 
@@ -15,7 +16,12 @@ app.add_middleware(
 
 @app.get("/health")
 def health_check():
-    return {"status": "connected", "message": "backend connected"}
+    db_status = "connected" if check_db_connection() else "disconnected"
+    return {
+        "status": "connected",
+        "database": db_status,
+        "message": f"backend connected (database {db_status})",
+    }
 
 
 if __name__ == "__main__":
