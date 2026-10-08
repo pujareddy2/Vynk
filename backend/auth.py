@@ -80,3 +80,28 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user
+
+
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+
+
+def get_optional_current_user(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> Optional[models.User]:
+    """FastAPI Dependency: Decodes JWT if present; returns None if guest/unauthenticated."""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id_str: Optional[str] = payload.get("sub")
+        if user_id_str is None:
+            return None
+        user_id = int(user_id_str)
+        user = db.query(models.User).filter(models.User.user_id == user_id).first()
+        if user and user.is_active:
+            return user
+    except Exception:
+        return None
+    return None
+
