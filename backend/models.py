@@ -14,6 +14,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 
 from database import Base
 
@@ -52,6 +53,8 @@ class User(Base):
     payments = relationship("Payment", back_populates="user")
     community_memberships = relationship("CommunityMember", back_populates="user", cascade="all, delete-orphan")
     given_feedbacks = relationship("Feedback", back_populates="reviewer", cascade="all, delete-orphan")
+    initiated_proposals = relationship("GroupProposal", foreign_keys="GroupProposal.initiator_user_id", back_populates="initiator", cascade="all, delete-orphan")
+    proposal_invitations = relationship("GroupProposalMember", back_populates="user", cascade="all, delete-orphan")
 
 
 # ============================================================================
@@ -59,7 +62,7 @@ class User(Base):
 # ============================================================================
 
 class Profile(Base):
-    """Public identity, bio, and approximate locality."""
+    """Public identity, bio, approximate locality, and semantic embedding."""
     __tablename__ = "profiles"
 
     profile_id = Column(Integer, primary_key=True, autoincrement=True)
@@ -75,6 +78,7 @@ class Profile(Base):
     avatar_url = Column(String(512), nullable=True)
     approx_locality = Column(String(150), nullable=True)
     budget_preference = Column(String(50), nullable=True)
+    embedding = Column(Vector(1536), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True),
@@ -177,7 +181,7 @@ class UserAvailability(Base):
 # ============================================================================
 
 class Activity(Base):
-    """Activity concept/template linked to primary interest."""
+    """Activity concept/template linked to primary interest and semantic embedding."""
     __tablename__ = "activities"
 
     activity_id = Column(Integer, primary_key=True, autoincrement=True)
@@ -185,6 +189,7 @@ class Activity(Base):
     created_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String(150), nullable=False)
     description = Column(Text, nullable=True)
+    embedding = Column(Vector(1536), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
@@ -499,3 +504,73 @@ class Feedback(Base):
     # Relationships
     event = relationship("Event", back_populates="feedbacks")
     reviewer = relationship("User", back_populates="given_feedbacks")
+
+
+# ============================================================================
+# 21. GROUP_PROPOSALS (Temporary AI-Suggested Cohort Proposals)
+# ============================================================================
+
+class GroupProposal(Base):
+    """
+    Temporary cohort proposal before official scheduling, venue booking, and payments.
+    State transitions: PROPOSED -> CONFIRMED -> CONVERTED_TO_EVENT / EXPIRED / CANCELLED.
+    """
+    __tablename__ = "group_proposals"
+
+    proposal_id = Column(Integer, primary_key=True, autoincrement=True)
+    initiator_user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
+    activity_id = Column(Integer, ForeignKey("activities.activity_id", ondelete="SET NULL"), nullable=True, index=True)
+    title = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    target_size = Column(Integer, default=4, nullable=False)
+    min_required_size = Column(Integer, default=2, nullable=False)
+    proposed_date = Column(Date, nullable=True)
+    proposed_start_time = Column(Time, nullable=True)
+    proposed_end_time = Column(Time, nullable=True)
+    target_locality = Column(String(120), nullable=True)
+    suggested_venue_id = Column(Integer, ForeignKey("venues.venue_id", ondelete="SET NULL"), nullable=True)
+    status = Column(String(30), default="PROPOSED", nullable=False, index=True)  # 'PROPOSED', 'CONFIRMED', 'EXPIRED', 'CONVERTED_TO_EVENT', 'CANCELLED'
+    converted_event_id = Column(Integer, ForeignKey("events.event_id", ondelete="SET NULL"), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("min_required_size >= 2", name="chk_proposal_min_size"),
+        CheckConstraint("target_size >= min_required_size", name="chk_proposal_target_gte_min"),
+    )
+
+    # Relationships
+    initiator = relationship("User", foreign_keys=[initiator_user_id], back_populates="initiated_proposals")
+    activity = relationship("Activity")
+    suggested_venue = relationship("Venue")
+    converted_event = relationship("Event")
+    members = relationship("GroupProposalMember", back_populates="proposal", cascade="all, delete-orphan")
+
+
+# ============================================================================
+# 22. GROUP_PROPOSAL_MEMBERS (Invited Members & Acceptance Statuses)
+# ============================================================================
+
+class GroupProposalMember(Base):
+    """
+    Roster of invited members for a temporary group proposal.
+    Member statuses: INVITED, ACCEPTED, DECLINED, AUTO_EXPIRED.
+    """
+    __tablename__ = "group_proposal_members"
+
+    proposal_id = Column(Integer, ForeignKey("group_proposals.proposal_id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), primary_key=True, index=True)
+    status = Column(String(20), default="INVITED", nullable=False)  # 'INVITED', 'ACCEPTED', 'DECLINED', 'AUTO_EXPIRED'
+    compatibility_score = Column(Integer, nullable=True)
+    invited_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    responded_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    proposal = relationship("GroupProposal", back_populates="members")
+    user = relationship("User", back_populates="proposal_invitations")

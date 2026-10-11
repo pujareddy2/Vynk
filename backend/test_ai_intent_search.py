@@ -209,7 +209,8 @@ def test_ai_intent_search_flow():
 
     top_candidate = data["people_matches"][0]
     assert "Amit" in top_candidate["display_name"]
-    assert top_candidate["match_score"] >= 80
+    assert top_candidate["deterministic_score"] >= 80
+    assert top_candidate["match_score"] >= 65
 
     print("\n--- 4. Events Discovered ---")
     print(f"  Found {len(data['events'])} events")

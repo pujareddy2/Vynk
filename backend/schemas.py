@@ -1,6 +1,7 @@
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
@@ -378,6 +379,10 @@ class EventUpdateRequest(BaseModel):
     status: Optional[str] = None
 
 
+class EventVenueBookRequest(BaseModel):
+    slot_id: int = Field(..., description="Target VenueSlot ID to reserve for this event")
+
+
 class EventResponse(BaseModel):
     event_id: int
     activity_id: int
@@ -427,9 +432,27 @@ class FeedbackResponse(BaseModel):
         from_attributes = True
 
 
+class UserReputationResponse(BaseModel):
+    user_id: int
+    display_name: str
+    average_rating: float = 0.0
+    total_reviews: int = 0
+    feedback_count: int = 0
+    five_star_count: int = 0
+    four_star_count: int = 0
+    three_star_count: int = 0
+    two_star_count: int = 0
+    one_star_count: int = 0
+    completed_events: int = 0
+
+    class Config:
+        from_attributes = True
+
+
 class CommunityCreateRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=150)
     description: Optional[str] = Field(None, max_length=1000)
+    initial_member_ids: Optional[List[int]] = Field(None, description="Optional user IDs to seed as initial members upon creation")
 
 
 class CommunityResponse(BaseModel):
@@ -444,17 +467,161 @@ class CommunityResponse(BaseModel):
         from_attributes = True
 
 
+class CommunityHealthResponse(BaseModel):
+    community_id: int
+    member_count: int
+    active_member_count: int
+    events_created: int
+    completed_events: int
+    recent_event_count: int
+    average_event_participation: int
+    average_feedback_rating: float
+    health_score: int
+    health_status: str
+
+    class Config:
+        from_attributes = True
+
+
+class MetricTrendItem(BaseModel):
+    current: Union[int, float]
+    previous: Union[int, float]
+    change: Union[int, float]
+
+
+class MetricsComparison(BaseModel):
+    active_members: MetricTrendItem
+    events_created: MetricTrendItem
+    completed_events: MetricTrendItem
+    average_participation: MetricTrendItem
+    average_feedback: MetricTrendItem
+
+
+class CommunityHealthTrendResponse(BaseModel):
+    community_id: int
+    current_health_score: int
+    previous_health_score: int
+    score_change: int
+    trend: str
+    current_status: str
+    previous_status: str
+    metrics_comparison: MetricsComparison
+
+    class Config:
+        from_attributes = True
+
+
+class CommunityLifecycleInsightResponse(BaseModel):
+    community_id: int
+    health_score: int
+    health_status: str
+    trend: str
+    score_change: int
+    lifecycle_stage: str
+    insight: str
+    recommended_focus: str
+
+    class Config:
+        from_attributes = True
+
+
+class CommunityActionRecommendationItem(BaseModel):
+    priority: str = Field(..., description="HIGH, MEDIUM, or LOW")
+    action: str = Field(..., description="Controlled action enum")
+    title: str = Field(..., description="Short recommendation headline")
+    reason: str = Field(..., description="Grounded factual rationale")
+    suggested_next_step: str = Field(..., description="Tactical next step")
+
+    class Config:
+        from_attributes = True
+
+
+class CommunityActionRecommendationsResponse(BaseModel):
+    community_id: int
+    recommendations: List[CommunityActionRecommendationItem]
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# COMMUNITY ACTION EXECUTION CONTRACT SCHEMAS (Step 9)
+# ============================================================================
+
+class AllowedAction(str, Enum):
+    CREATE_EVENT = "CREATE_EVENT"
+    RE_ENGAGE_MEMBERS = "RE_ENGAGE_MEMBERS"
+    COLLECT_FEEDBACK = "COLLECT_FEEDBACK"
+    GROW_MEMBERSHIP = "GROW_MEMBERSHIP"
+    MAINTAIN_ACTIVITY = "MAINTAIN_ACTIVITY"
+    REACTIVATE_COMMUNITY = "REACTIVATE_COMMUNITY"
+
+
+class ActionRequest(BaseModel):
+    action: str = Field(..., description="Action to execute (must map to AllowedAction)")
+    parameters: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Optional action payload")
+    reason: Optional[str] = Field(None, description="Optional trigger rationale")
+
+    class Config:
+        from_attributes = True
+
+
+class ActionValidationResult(BaseModel):
+    is_valid: bool
+    action: Optional[str] = None
+    normalized_action: Optional[AllowedAction] = None
+    errors: List[str] = Field(default_factory=list)
+    sanitized_parameters: Dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        from_attributes = True
+
+
+class ActionExecutionResult(BaseModel):
+    community_id: int
+    action: str
+    status: str = Field(..., description="'SUCCESS', 'REJECTED', 'PENDING', or 'FAILED'")
+    success: bool
+    message: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+    executed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ActionAuthorizationResult(BaseModel):
+    is_authorized: bool
+    status: str = Field(..., description="'AUTHORIZED', 'UNAUTHENTICATED', 'COMMUNITY_NOT_FOUND', 'NOT_A_MEMBER', or 'INVALID_ACTION'")
+    status_code: int = Field(..., description="HTTP status code (200, 401, 404, 403, 400)")
+    community_id: Optional[int] = None
+    requester_id: Optional[int] = None
+    action: Optional[str] = None
+    message: str
+
+    class Config:
+        from_attributes = True
 # ============================================================================
 # DETERMINISTIC PEOPLE MATCHING SCHEMAS
 # ============================================================================
+
+class MatchReputationSummary(BaseModel):
+    average_rating: float = 0.0
+    total_reviews: int = 0
+    completed_events: int = 0
+
 
 class PeopleMatchCandidate(BaseModel):
     user_id: int
     display_name: str
     avatar_url: Optional[str] = None
     approx_locality: Optional[str] = None
-    match_score: int = Field(..., ge=0, le=100, description="Deterministic compatibility score (0-100)")
-    match_breakdown: dict = Field(..., description="Points breakdown: interest, availability, location, skill")
+    match_score: int = Field(..., ge=0, le=100, description="Combined final match score (0-100)")
+    deterministic_score: Optional[int] = Field(None, description="Deterministic rule-based score (0-100)")
+    semantic_similarity: Optional[float] = Field(None, description="AI semantic embedding cosine similarity (0.0 to 1.0)")
+    trust_score: Optional[int] = Field(None, ge=0, le=100, description="Reputation and trust score (0-100)")
+    reputation: Optional[MatchReputationSummary] = None
+    match_breakdown: dict = Field(..., description="Points breakdown: interest, availability, location, skill, semantic")
     match_reasons: List[str] = Field(default=[], description="Human-readable reasons for match")
     shared_interests: List[str] = []
     relevant_skills: List[str] = []
@@ -504,6 +671,330 @@ class AIIntentSearchResponse(BaseModel):
     people_matches: List[PeopleMatchCandidate] = []
     events: List[EventResponse] = []
     venues: List[VenueResponse] = []
+
+
+# ============================================================================
+# AI GROUP PROPOSAL SCHEMAS
+# ============================================================================
+
+class AIGroupProposeRequest(BaseModel):
+    query: str = Field(..., min_length=3, max_length=500, description="Natural language group request (e.g. 'Play badminton with 4 people Saturday evening in Indiranagar')")
+    target_size: Optional[int] = Field(None, ge=2, le=20, description="Optional override for target cohort size")
+    min_required_size: Optional[int] = Field(None, ge=2, le=20, description="Optional override for minimum required accepted members")
+    custom_title: Optional[str] = Field(None, max_length=150)
+
+
+class GroupProposalMemberResponse(BaseModel):
+    user_id: int
+    display_name: str
+    avatar_url: Optional[str] = None
+    approx_locality: Optional[str] = None
+    status: str = Field(..., description="INVITED, ACCEPTED, DECLINED, AUTO_EXPIRED")
+    compatibility_score: Optional[int] = None
+    invited_at: datetime
+    responded_at: Optional[datetime] = None
+
+
+class GroupProposalResponse(BaseModel):
+    proposal_id: int
+    initiator_user_id: int
+    initiator_name: str
+    activity_id: Optional[int] = None
+    activity_title: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    target_size: int
+    min_required_size: int
+    proposed_date: Optional[date] = None
+    proposed_start_time: Optional[time] = None
+    proposed_end_time: Optional[time] = None
+    target_locality: Optional[str] = None
+    suggested_venue_id: Optional[int] = None
+    suggested_venue_name: Optional[str] = None
+    status: str = Field(..., description="PROPOSED, CONFIRMED, EXPIRED, CONVERTED_TO_EVENT, CANCELLED")
+    converted_event_id: Optional[int] = None
+    expires_at: datetime
+    created_at: datetime
+    members: List[GroupProposalMemberResponse] = []
+    intent_understood: Optional[AIIntentResponse] = None
+
+
+class GroupProposalRespondRequest(BaseModel):
+    response: str = Field(..., description="Response to invitation: 'ACCEPTED' or 'DECLINED'")
+
+
+# ============================================================================
+# AI RECOMMENDATION ENGINE SCHEMAS
+# ============================================================================
+
+class RecommendationItem(BaseModel):
+    type: str = Field(..., description="'EVENT', 'ACTIVITY', or 'PEOPLE'")
+    id: int
+    title: str
+    score: int = Field(..., ge=0, le=100, description="Recommendation match score (0-100)")
+    reasons: List[str] = Field(default=[], description="Explanation of why this entity is recommended")
+    locality: Optional[str] = None
+    event_id: Optional[int] = None
+    activity_id: Optional[int] = None
+    user_id: Optional[int] = None
+    event_date: Optional[date] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    remaining_spots: Optional[int] = None
+    per_person_cost: Optional[float] = None
+    trust_score: Optional[int] = None
+    reputation: Optional[MatchReputationSummary] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RecommendationResponse(BaseModel):
+    total_recommendations: int
+    user_locality: Optional[str] = None
+    recommendations: List[RecommendationItem] = []
+
+
+# ============================================================================
+# DO SOMETHING NOW SCHEMAS
+# ============================================================================
+
+class DoSomethingNowOption(BaseModel):
+    type: str = Field(..., description="'EVENT' or 'ACTIVITY'")
+    action: str = Field(..., description="'JOIN' (existing event) or 'CREATE' (group/activity proposal) or 'EXPLORE'")
+    title: str
+    score: int = Field(..., ge=0, le=100, description="Real-time feasibility & match score (0-100)")
+    feasible: bool = Field(..., description="Whether this option can be acted upon right now")
+    reason: str = Field(..., description="Actionable human-readable explanation")
+    reasons: List[str] = Field(default=[], description="Detailed factors breakdown")
+    event_id: Optional[int] = None
+    activity_id: Optional[int] = None
+    interest_id: Optional[int] = None
+    interest_name: Optional[str] = None
+    locality: Optional[str] = None
+    event_date: Optional[date] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    remaining_spots: Optional[int] = None
+    cost_per_person: Optional[float] = None
+    available_peers_count: int = 0
+    available_venues_count: int = 0
+    suggested_slot_id: Optional[int] = None
+    suggested_venue_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DoSomethingNowResponse(BaseModel):
+    target_date: date
+    target_time: time
+    day_of_week: str
+    user_locality: Optional[str] = None
+    user_available_now: bool
+    total_options: int
+    options: List[DoSomethingNowOption] = []
+
+
+# ============================================================================
+# AI EXPERIENCE GENERATOR SCHEMAS
+# ============================================================================
+
+class ExperienceAgendaItem(BaseModel):
+    time_window: str = Field(..., description="e.g. '18:00 - 18:15' or '00:00 - 00:15'")
+    title: str = Field(..., description="Phase title, e.g. 'Warm-up & Rally'")
+    description: str = Field(..., description="Activity phase guidance")
+
+
+class ExperienceGenerateRequest(BaseModel):
+    query: str = Field(..., min_length=3, max_length=500, description="Natural language prompt, e.g. 'Play badminton with 4 people Saturday evening in Indiranagar'")
+    activity_id: Optional[int] = Field(None, description="Optional explicit Activity ID override")
+    venue_id: Optional[int] = Field(None, description="Optional explicit Venue ID override")
+    slot_id: Optional[int] = Field(None, description="Optional explicit VenueSlot ID override")
+    target_date: Optional[date] = Field(None, description="Optional explicit target date override")
+    target_time: Optional[time] = Field(None, description="Optional explicit target start time override")
+    target_size: Optional[int] = Field(None, ge=2, le=30, description="Optional cohort size override")
+    locality: Optional[str] = Field(None, max_length=150, description="Optional locality override")
+
+
+class ExperiencePlanResponse(BaseModel):
+    experience_title: str = Field(..., description="Catchy headline title for the experience")
+    tagline: str = Field(..., description="Engaging thematic tagline")
+    activity_id: int
+    activity_name: str
+    target_date: date
+    start_time: time
+    end_time: time
+    locality: str
+    venue_id: Optional[int] = None
+    venue_name: Optional[str] = None
+    venue_address: Optional[str] = None
+    slot_id: Optional[int] = None
+    target_size: int
+    per_person_cost: Optional[float] = None
+    total_cost: Optional[float] = None
+    currency: str = "INR"
+    why_this_works: List[str] = Field(default=[], description="Bullet points explaining why this plan is feasible and tailored")
+    agenda: List[ExperienceAgendaItem] = Field(default=[], description="Structured timeline/itinerary for the session")
+    preparation_checklist: List[str] = Field(default=[], description="Items/gear participants should bring")
+    suggested_cohort_user_ids: List[int] = Field(default=[], description="Verified compatible participant candidate IDs")
+    suggested_cohort_names: List[str] = Field(default=[], description="Display names of verified candidate participants")
+    action_type: str = Field(..., description="'CREATE_PROPOSAL', 'BOOK_EVENT', or 'JOIN_EVENT'")
+    action_payload: dict = Field(..., description="Actionable JSON payload ready to trigger downstream Vynk lifecycle endpoints")
+    ai_generated: bool = Field(default=True, description="Whether generated by LLM or deterministic fallback engine")
+
+
+# ============================================================================
+# AI DEMAND RADAR SCHEMAS
+# ============================================================================
+
+class DemandRadarItem(BaseModel):
+    activity: str = Field(..., description="Activity title or master interest name")
+    activity_id: Optional[int] = Field(None, description="Matched Activity Template ID if available")
+    interest_id: Optional[int] = Field(None, description="Master Interest ID")
+    category: Optional[str] = Field(None, description="Interest category, e.g. 'Sports', 'Music', 'Tech'")
+    locality: str = Field(..., description="Geographic cluster locality, e.g. 'Indiranagar'")
+    preferred_day: str = Field(..., description="Peak day of week for demand, e.g. 'Saturday'")
+    preferred_time: str = Field(..., description="Peak time window, e.g. '18:00-20:00'")
+    interested_users: int = Field(..., description="Number of local active users with this interest & availability")
+    active_events: int = Field(..., description="Number of currently scheduled/open events serving this cluster")
+    available_spots: int = Field(..., description="Remaining open spots across active events")
+    estimated_unmet_demand: int = Field(..., description="Estimated unmet user demand: max(0, interested_users - available_spots)")
+    demand_score: int = Field(..., ge=0, le=100, description="Deterministic demand pressure score (0-100)")
+    status: str = Field(..., description="'HIGH_DEMAND', 'MODERATE_DEMAND', 'BALANCED', 'EMERGING_DEMAND', or 'LOW_DEMAND'")
+    suggested_action: Optional[str] = Field(None, description="Actionable recommendation for community hosts or venue owners")
+
+    class Config:
+        from_attributes = True
+
+
+class DemandRadarResponse(BaseModel):
+    total_clusters: int = Field(..., description="Total demand clusters detected")
+    locality_filter: Optional[str] = None
+    clusters: List[DemandRadarItem] = Field(default=[], description="Ranked list of detected demand clusters")
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# AI DEMAND PREDICTION & FEASIBILITY SCHEMAS
+# ============================================================================
+
+class DemandPredictionRequest(BaseModel):
+    activity: Optional[str] = Field(None, description="Activity title or interest name, e.g. 'Badminton'")
+    activity_id: Optional[int] = Field(None, description="Optional Activity ID override")
+    interest_id: Optional[int] = Field(None, description="Optional Interest ID override")
+    locality: str = Field(..., description="Target locality, e.g. 'Indiranagar'")
+    day_of_week: str = Field(..., description="Target day of week, e.g. 'Saturday'")
+    preferred_time: Optional[str] = Field("18:00-20:00", description="Time window, e.g. '18:00-20:00'")
+    target_capacity: Optional[int] = Field(None, ge=2, le=50, description="Proposed event capacity")
+    target_price: Optional[float] = Field(None, ge=0, description="Proposed price per participant in INR")
+
+
+class DemandPredictionResponse(BaseModel):
+    activity: str
+    activity_id: Optional[int] = None
+    interest_id: Optional[int] = None
+    locality: str
+    day_of_week: str
+    preferred_time: str
+    current_demand: str = Field(..., description="'HIGH', 'MODERATE', 'BALANCED', or 'LOW'")
+    demand_score: int = Field(..., ge=0, le=100, description="Deterministic demand pressure score")
+    interested_users: int = Field(..., description="Local pool of interested & available users")
+    active_events: int = Field(..., description="Existing competing events in this locality/window")
+    available_spots: int = Field(..., description="Currently open spots in existing events")
+    unmet_demand: int = Field(..., description="Unserved local user count")
+    expected_participants_min: int = Field(..., description="Conservative lower bound expected attendance")
+    expected_participants_max: int = Field(..., description="Optimistic upper bound expected attendance")
+    expected_participants_range: str = Field(..., description="Human-readable expected range, e.g. '8-10'")
+    attendance_probability: int = Field(..., ge=0, le=100, description="Percentage likelihood of target turnout (e.g. 82)")
+    recommended_capacity: int = Field(..., description="AI recommended max participants for optimal fill rate")
+    estimated_fill_rate: int = Field(..., ge=0, le=100, description="Projected event fill percentage (e.g. 87)")
+    suggested_price_per_person: float = Field(..., description="Fair recommended split cost per participant in INR")
+    feasibility: str = Field(..., description="'HIGH', 'MODERATE', 'LOW', or 'CRITICAL_RISK'")
+    feasibility_score: int = Field(..., ge=0, le=100, description="Composite feasibility score (0-100)")
+    venue_slots_available: int = Field(default=0, description="Bookable venue slots found in this locality")
+    factors: List[str] = Field(default=[], description="Bullet-point feasibility rationale")
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# CROSS-DOMAIN OPPORTUNITY INTELLIGENCE SCHEMAS
+# ============================================================================
+
+class OpportunityItem(BaseModel):
+    opportunity_type: str = Field(..., description="'CREATE_EVENT', 'VENUE_PARTNERSHIP', or 'COMMUNITY_PROPOSAL'")
+    activity: str = Field(..., description="Activity title or master interest name")
+    activity_id: Optional[int] = None
+    interest_id: Optional[int] = None
+    category: Optional[str] = None
+    locality: str
+    day: str
+    time: str
+    demand_score: int
+    feasibility_score: int
+    expected_participants: str
+    recommended_capacity: int
+    venue_available: bool
+    suggested_venue_id: Optional[int] = None
+    suggested_venue_name: Optional[str] = None
+    suggested_price_per_person: float
+    opportunity_score: int
+    action: str
+    action_payload: Optional[dict] = None
+    reasons: List[str] = []
+
+    class Config:
+        from_attributes = True
+
+
+class OpportunitiesResponse(BaseModel):
+    total_opportunities: int
+    locality_filter: Optional[str] = None
+    opportunities: List[OpportunityItem] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# 17. AI COMMUNITY INTELLIGENCE SCHEMAS
+# ============================================================================
+
+class CommunityProposalItem(BaseModel):
+    community_type: str = Field(..., description="Theme category, e.g. 'SPORTS', 'OUTDOORS', 'ARTS'")
+    theme: str = Field(..., description="Proposed community title, e.g. 'Indiranagar Weekend Badminton'")
+    activity: str = Field(..., description="Core activity name, e.g. 'Badminton'")
+    activity_id: Optional[int] = None
+    interest_id: Optional[int] = None
+    locality: str = Field(..., description="Geographical focal point, e.g. 'Indiranagar'")
+    member_candidates: int = Field(..., description="Number of compatible peers detected in pattern")
+    candidate_user_ids: List[int] = Field(default=[], description="User IDs of matched cohort peers")
+    recurring_pattern: str = Field(..., description="Weekly schedule alignment, e.g. 'Saturday evenings'")
+    day_of_week: Optional[str] = None
+    time_window: Optional[str] = None
+    compatibility_score: int = Field(..., description="Average cohort compatibility score (0-100)")
+    community_opportunity_score: int = Field(..., description="Composite community viability score (0-100)")
+    suggested_action: str = Field(default="CREATE_COMMUNITY", description="'CREATE_COMMUNITY' or 'JOIN_COMMUNITY'")
+    action_payload: Optional[dict] = Field(None, description="Pre-filled payload to pass to POST /communities")
+    reasons: List[str] = []
+    existing_community_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CommunityIntelligenceResponse(BaseModel):
+    total_proposals: int
+    locality_filter: Optional[str] = None
+    proposals: List[CommunityProposalItem] = []
+
+    class Config:
+        from_attributes = True
+
 
 
 
