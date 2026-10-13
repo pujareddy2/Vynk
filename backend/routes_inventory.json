@@ -1,0 +1,470 @@
+[
+  {
+    "path": "/openapi.json",
+    "methods": "GET",
+    "name": "openapi",
+    "summary": ""
+  },
+  {
+    "path": "/docs",
+    "methods": "GET",
+    "name": "swagger_ui_html",
+    "summary": ""
+  },
+  {
+    "path": "/docs/oauth2-redirect",
+    "methods": "GET",
+    "name": "swagger_ui_redirect",
+    "summary": ""
+  },
+  {
+    "path": "/redoc",
+    "methods": "GET",
+    "name": "redoc_html",
+    "summary": ""
+  },
+  {
+    "path": "/health",
+    "methods": "GET",
+    "name": "health_check",
+    "summary": null
+  },
+  {
+    "path": "/auth/register",
+    "methods": "POST",
+    "name": "register",
+    "summary": "Register a new user account"
+  },
+  {
+    "path": "/auth/login",
+    "methods": "POST",
+    "name": "login",
+    "summary": "Login and obtain JWT access token (supports JSON and OAuth2 Form)"
+  },
+  {
+    "path": "/auth/me",
+    "methods": "GET",
+    "name": "get_me",
+    "summary": "Get current authenticated user account"
+  },
+  {
+    "path": "/interests",
+    "methods": "GET",
+    "name": "list_interests",
+    "summary": "List all master interests categorized"
+  },
+  {
+    "path": "/skills",
+    "methods": "GET",
+    "name": "list_skills",
+    "summary": "List all master skills categorized"
+  },
+  {
+    "path": "/profile/me",
+    "methods": "GET",
+    "name": "get_my_profile",
+    "summary": "Fetch current user's complete profile, interests, skills, and availability"
+  },
+  {
+    "path": "/profile/me",
+    "methods": "PATCH",
+    "name": "update_my_profile",
+    "summary": "Partially update user basic profile fields"
+  },
+  {
+    "path": "/profile/me/interests",
+    "methods": "PUT",
+    "name": "update_my_interests",
+    "summary": "Update user selected interests"
+  },
+  {
+    "path": "/profile/me/skills",
+    "methods": "PUT",
+    "name": "update_my_skills",
+    "summary": "Update user skills and proficiency levels"
+  },
+  {
+    "path": "/profile/me/availability",
+    "methods": "PUT",
+    "name": "update_my_availability",
+    "summary": "Update user weekly availability schedule"
+  },
+  {
+    "path": "/profile/me/onboarding",
+    "methods": "POST",
+    "name": "complete_onboarding",
+    "summary": "Complete atomic onboarding submission"
+  },
+  {
+    "path": "/profile/{user_id}",
+    "methods": "GET",
+    "name": "get_public_profile",
+    "summary": "View a user's public profile (privacy-shielded)"
+  },
+  {
+    "path": "/activities",
+    "methods": "POST",
+    "name": "create_activity",
+    "summary": "Create a new activity template proposal"
+  },
+  {
+    "path": "/activities",
+    "methods": "GET",
+    "name": "list_activities",
+    "summary": "List all activities with optional category, interest, and search filters"
+  },
+  {
+    "path": "/activities/{activity_id}",
+    "methods": "GET",
+    "name": "get_activity",
+    "summary": "Get single activity details by ID"
+  },
+  {
+    "path": "/activities/{activity_id}",
+    "methods": "PATCH",
+    "name": "update_activity",
+    "summary": "Update an activity (Creator only)"
+  },
+  {
+    "path": "/activities/{activity_id}",
+    "methods": "DELETE",
+    "name": "delete_activity",
+    "summary": "Delete an activity (Creator only)"
+  },
+  {
+    "path": "/venues",
+    "methods": "POST",
+    "name": "create_venue",
+    "summary": "Register a new venue (Admin or Venue Owner)"
+  },
+  {
+    "path": "/venues",
+    "methods": "GET",
+    "name": "list_venues",
+    "summary": "List registered venues filtered by locality, activity, or search"
+  },
+  {
+    "path": "/venues/{venue_id}",
+    "methods": "GET",
+    "name": "get_venue",
+    "summary": "Get single venue details by ID"
+  },
+  {
+    "path": "/venues/{venue_id}",
+    "methods": "PATCH",
+    "name": "update_venue",
+    "summary": "Update venue details (Owner only)"
+  },
+  {
+    "path": "/venues/{venue_id}/slots",
+    "methods": "POST",
+    "name": "create_venue_slot",
+    "summary": "Create a bookable time slot for a venue"
+  },
+  {
+    "path": "/venues/{venue_id}/slots",
+    "methods": "GET",
+    "name": "list_venue_slots",
+    "summary": "List available time slots for a venue with optional date filter"
+  },
+  {
+    "path": "/events",
+    "methods": "POST",
+    "name": "create_event",
+    "summary": "Create a scheduled event with optional venue slot reservation"
+  },
+  {
+    "path": "/events",
+    "methods": "GET",
+    "name": "list_events",
+    "summary": "Discover scheduled events with filters (locality, activity, date, capacity, status)"
+  },
+  {
+    "path": "/events/{event_id}",
+    "methods": "GET",
+    "name": "get_event",
+    "summary": "Get full event details, participant roster, venue booking, and dynamic split cost"
+  },
+  {
+    "path": "/events/{event_id}",
+    "methods": "PATCH",
+    "name": "update_event",
+    "summary": "Update event details or lifecycle status (Host only)"
+  },
+  {
+    "path": "/events/{event_id}/join",
+    "methods": "POST",
+    "name": "join_event",
+    "summary": "Join an event roster with concurrency-safe capacity check"
+  },
+  {
+    "path": "/events/{event_id}/join",
+    "methods": "DELETE",
+    "name": "leave_event_delete",
+    "summary": "Leave an event roster (REST DELETE format)"
+  },
+  {
+    "path": "/events/{event_id}/leave",
+    "methods": "POST",
+    "name": "leave_event_post",
+    "summary": "Leave an event roster (Alias POST format)"
+  },
+  {
+    "path": "/events/{event_id}/book-venue",
+    "methods": "POST",
+    "name": "book_event_venue",
+    "summary": "Alias: Reserve and attach a compatible venue slot to an active event (Host only)"
+  },
+  {
+    "path": "/events/{event_id}/venue-book",
+    "methods": "POST",
+    "name": "book_event_venue",
+    "summary": "Reserve and attach a compatible venue slot to an active event (Host only)"
+  },
+  {
+    "path": "/events/{event_id}/pay",
+    "methods": "POST",
+    "name": "pay_event_split_share",
+    "summary": "Pay participant's split share toward the venue booking"
+  },
+  {
+    "path": "/payment-accounts",
+    "methods": "POST",
+    "name": "create_payment_account",
+    "summary": "Register venue owner or host payout account"
+  },
+  {
+    "path": "/payment-accounts/me",
+    "methods": "GET",
+    "name": "get_my_payment_account",
+    "summary": "Get current user's registered payout account"
+  },
+  {
+    "path": "/events/{event_id}/payout",
+    "methods": "POST",
+    "name": "trigger_event_payout",
+    "summary": "Trigger payout settlement to venue owner for a fully-paid event booking"
+  },
+  {
+    "path": "/bookings/{booking_id}/payout",
+    "methods": "POST",
+    "name": "trigger_venue_payout",
+    "summary": "Alias: Trigger payout settlement by booking ID"
+  },
+  {
+    "path": "/matches/people",
+    "methods": "GET",
+    "name": "match_people",
+    "summary": "Deterministic & Trust-Aware People Matching Engine alias"
+  },
+  {
+    "path": "/matches",
+    "methods": "GET",
+    "name": "match_people",
+    "summary": "Deterministic & Trust-Aware People Matching Engine (Discover compatible peers)"
+  },
+  {
+    "path": "/recommendations",
+    "methods": "GET",
+    "name": "get_recommendations",
+    "summary": "AI Recommendation Engine: Personalized events, activities, and compatible peers"
+  },
+  {
+    "path": "/do-something-now",
+    "methods": "GET",
+    "name": "do_something_now",
+    "summary": "Do Something Now: Real-time viable experiences (Join active events vs Create group/activity)"
+  },
+  {
+    "path": "/communities",
+    "methods": "POST",
+    "name": "create_community",
+    "summary": "Create a permanent recurring community circle"
+  },
+  {
+    "path": "/communities",
+    "methods": "GET",
+    "name": "list_communities",
+    "summary": "List all community circles"
+  },
+  {
+    "path": "/communities/{community_id}/join",
+    "methods": "POST",
+    "name": "join_community",
+    "summary": "Join a community circle"
+  },
+  {
+    "path": "/communities/{community_id}/health",
+    "methods": "GET",
+    "name": "get_community_health",
+    "summary": "Get deterministic community health metrics and score"
+  },
+  {
+    "path": "/communities/{community_id}/health/trend",
+    "methods": "GET",
+    "name": "get_community_health_trend",
+    "summary": "Get deterministic community health trend and period comparison"
+  },
+  {
+    "path": "/communities/{community_id}/lifecycle",
+    "methods": "GET",
+    "name": "get_community_lifecycle",
+    "summary": "Get AI Community Lifecycle Intelligence and strategic engagement insight"
+  },
+  {
+    "path": "/communities/{community_id}/recommendations",
+    "methods": "GET",
+    "name": "get_community_recommendations",
+    "summary": "Get tactical AI action recommendations grounded in community lifecycle state"
+  },
+  {
+    "path": "/events/{event_id}/feedback",
+    "methods": "POST",
+    "name": "submit_feedback",
+    "summary": "Submit peer rating and review for a completed event"
+  },
+  {
+    "path": "/events/{event_id}/feedback",
+    "methods": "GET",
+    "name": "get_event_feedback",
+    "summary": "Get all peer feedback and reviews for an event"
+  },
+  {
+    "path": "/users/me/reputation",
+    "methods": "GET",
+    "name": "get_my_reputation",
+    "summary": "Get reputation summary for authenticated user"
+  },
+  {
+    "path": "/users/{user_id}/reputation",
+    "methods": "GET",
+    "name": "get_user_reputation",
+    "summary": "Get reputation and trust summary for a specific user"
+  },
+  {
+    "path": "/ai/intent",
+    "methods": "POST",
+    "name": "parse_ai_intent",
+    "summary": "Understand and extract structured parameters from natural language user input"
+  },
+  {
+    "path": "/ai/intent/search",
+    "methods": "POST",
+    "name": "search_by_ai_intent",
+    "summary": "Execute end-to-end AI search: Natural language sentence -> Structured intent -> People, Events & Venues"
+  },
+  {
+    "path": "/ai/groups/propose",
+    "methods": "POST",
+    "name": "propose_ai_group",
+    "summary": "Formulate and create an AI-suggested temporary Group Proposal with invited matching candidates"
+  },
+  {
+    "path": "/groups/proposals/{proposal_id}/respond",
+    "methods": "POST",
+    "name": "respond_to_group_proposal",
+    "summary": "Accept or decline an invitation to a temporary group proposal"
+  },
+  {
+    "path": "/groups/proposals/me",
+    "methods": "GET",
+    "name": "list_my_group_proposals",
+    "summary": "List all group proposals where current user is initiator or invited member"
+  },
+  {
+    "path": "/groups/proposals/{proposal_id}",
+    "methods": "GET",
+    "name": "get_group_proposal",
+    "summary": "Get details and member status roster of a group proposal"
+  },
+  {
+    "path": "/groups/proposals/{proposal_id}/convert",
+    "methods": "POST",
+    "name": "convert_group_proposal_to_event",
+    "summary": "Convert a CONFIRMED group proposal into a scheduled Event with enrolled participants"
+  },
+  {
+    "path": "/ai/experiences/generate",
+    "methods": "POST",
+    "name": "generate_experience_plan",
+    "summary": "AI Experience Generator: Synthesize verified backend facts into an actionable experience plan"
+  },
+  {
+    "path": "/ai/demand-radar",
+    "methods": "GET",
+    "name": "get_demand_radar",
+    "summary": "AI Demand Radar: Detect collective activity demand and underserved local opportunities"
+  },
+  {
+    "path": "/ai/demand-prediction",
+    "methods": "POST",
+    "name": "predict_demand_feasibility",
+    "summary": "AI Demand Prediction & Feasibility: Predict attendance, fill rate, and capacity for proposed activities"
+  },
+  {
+    "path": "/ai/demand-prediction",
+    "methods": "GET",
+    "name": "predict_demand_feasibility_get",
+    "summary": "AI Demand Prediction & Feasibility (GET): Predict attendance, fill rate, and capacity for proposed activities"
+  },
+  {
+    "path": "/ai/opportunities",
+    "methods": "GET",
+    "name": "get_opportunities",
+    "summary": "Cross-Domain Opportunity Intelligence: Orchestrate demand, prediction, venues, and matching into actionable opportunities"
+  },
+  {
+    "path": "/ai/communities",
+    "methods": "GET",
+    "name": "get_community_intelligence",
+    "summary": "AI Communities intelligence endpoint alias"
+  },
+  {
+    "path": "/ai/community-proposals",
+    "methods": "GET",
+    "name": "get_community_intelligence",
+    "summary": "AI Community Proposals alias"
+  },
+  {
+    "path": "/ai/community-intelligence",
+    "methods": "GET",
+    "name": "get_community_intelligence",
+    "summary": "AI Community Intelligence: Detect naturally forming patterns and propose communities"
+  },
+  {
+    "path": "/notifications",
+    "methods": "GET",
+    "name": "get_user_notifications",
+    "summary": "Get User Notification Inbox"
+  },
+  {
+    "path": "/notifications/{notification_id}/read",
+    "methods": "PATCH",
+    "name": "mark_user_notification_read",
+    "summary": "Mark Notification as Read"
+  },
+  {
+    "path": "/notifications/{notification_id}/execute",
+    "methods": "POST",
+    "name": "execute_user_notification",
+    "summary": "Execute Actionable Notification Action"
+  },
+  {
+    "path": "/notifications/{notification_id}/accept",
+    "methods": "POST",
+    "name": "execute_user_notification",
+    "summary": "Accept and Execute Actionable Notification"
+  },
+  {
+    "path": "/notifications/{notification_id}/accept",
+    "methods": "PATCH",
+    "name": "accept_user_notification",
+    "summary": "Accept Actionable Notification"
+  },
+  {
+    "path": "/notifications/{notification_id}/dismiss",
+    "methods": "PATCH",
+    "name": "dismiss_user_notification",
+    "summary": "Dismiss Notification"
+  }
+]

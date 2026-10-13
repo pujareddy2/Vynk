@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy.orm import Session
 from fastapi.testclient import TestClient
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from database import SessionLocal
 import models
@@ -15,6 +15,8 @@ from main import (
     authorize_community_action,
     dispatch_community_action,
     COMMUNITY_ACTION_HANDLERS,
+    _handle_maintain_activity_action,
+    _handle_reactivate_community_action,
 )
 
 client = TestClient(app)
@@ -526,6 +528,27 @@ class TestCommunityActionDispatcher(unittest.TestCase):
         ))
         cls.db.commit()
 
+        # Add completed event for collect feedback testing
+        disp_completed = models.Event(
+            activity_id=cls.activity.activity_id,
+            host_id=cls.member_user.user_id,
+            title=f"Disp Completed Event {cls.ts}",
+            event_date=date.today() - timedelta(days=1),
+            start_time=time(14, 0),
+            end_time=time(16, 0),
+            max_capacity=10,
+            status="COMPLETED",
+        )
+        cls.db.add(disp_completed)
+        cls.db.flush()
+
+        cls.db.add(models.EventParticipant(
+            event_id=disp_completed.event_id,
+            user_id=cls.peer_member.user_id,
+            status="CONFIRMED",
+        ))
+        cls.db.commit()
+
     @classmethod
     def tearDownClass(cls):
         cls.db.close()
@@ -584,6 +607,18 @@ class TestCommunityActionDispatcher(unittest.TestCase):
             elif action_enum == schemas.AllowedAction.RE_ENGAGE_MEMBERS:
                 self.assertEqual(exec_res.status, "COMPLETED")
                 self.assertIsNotNone(exec_res.details.get("prepared_notifications"))
+            elif action_enum == schemas.AllowedAction.COLLECT_FEEDBACK:
+                self.assertEqual(exec_res.status, "COMPLETED")
+                self.assertIsNotNone(exec_res.details.get("prepared_feedback_requests"))
+            elif action_enum == schemas.AllowedAction.GROW_MEMBERSHIP:
+                self.assertEqual(exec_res.status, "COMPLETED")
+                self.assertIsNotNone(exec_res.details.get("prepared_invitations"))
+            elif action_enum == schemas.AllowedAction.MAINTAIN_ACTIVITY:
+                self.assertEqual(exec_res.status, "COMPLETED")
+                self.assertIsNotNone(exec_res.details.get("maintenance_plan"))
+            elif action_enum == schemas.AllowedAction.REACTIVATE_COMMUNITY:
+                self.assertEqual(exec_res.status, "COMPLETED")
+                self.assertIsNotNone(exec_res.details.get("delivery_status"))
             else:
                 self.assertEqual(exec_res.status, "READY")
                 self.assertEqual(exec_res.details.get("dispatched_handler"), expected_handler_name)
@@ -1152,34 +1187,22 @@ class TestCreateEventActionExecution(unittest.TestCase):
         self.assertEqual(events_before, events_after, "Failed execution must leave no partial event")
         self.assertEqual(participants_before, participants_after, "Failed execution must leave no partial participant")
 
-    def test_11_remaining_stub_actions_remain_controlled_stubs(self):
-        """The remaining 4 AllowedActions remain controlled READY stubs causing zero mutations."""
-        stub_actions = [
-            schemas.AllowedAction.COLLECT_FEEDBACK,
-            schemas.AllowedAction.GROW_MEMBERSHIP,
-            schemas.AllowedAction.MAINTAIN_ACTIVITY,
-            schemas.AllowedAction.REACTIVATE_COMMUNITY,
-        ]
+    def test_11_reactivate_community_action_causes_zero_event_mutations(self):
+        """Executing REACTIVATE_COMMUNITY causes strictly zero unexpected event creations."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={"notes": "check"})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.member.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
 
         events_before = self.db.query(models.Event).count()
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.member.user_id, val_res, auth_res)
 
-        for action_enum in stub_actions:
-            req = schemas.ActionRequest(action=action_enum.value, parameters={"notes": "stub check"})
-            val_res = validate_community_action_request(req)
-            self.assertTrue(val_res.is_valid)
-
-            auth_res = authorize_community_action(self.db, self.community.community_id, self.member.user_id, val_res)
-            self.assertTrue(auth_res.is_authorized)
-
-            exec_res = dispatch_community_action(self.db, self.community.community_id, self.member.user_id, val_res, auth_res)
-
-            self.assertTrue(exec_res.success)
-            self.assertEqual(exec_res.status, "READY")
-            self.assertEqual(exec_res.action, action_enum.value)
-            self.assertIn("dispatched successfully", exec_res.message)
-
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
         events_after = self.db.query(models.Event).count()
-        self.assertEqual(events_before, events_after, "Stub actions must create zero events")
+        self.assertEqual(events_before, events_after, "REACTIVATE_COMMUNITY must create zero events")
 
 
 class TestReEngageMembersActionExecution(unittest.TestCase):
@@ -1477,29 +1500,1353 @@ class TestReEngageMembersActionExecution(unittest.TestCase):
 
         self.assertEqual(initial_counts, after_counts, "Re-engagement preparation must cause zero DB writes")
 
-    def test_09_remaining_four_actions_remain_controlled_stubs(self):
-        """The remaining 4 actions remain controlled READY stubs causing zero side effects."""
-        remaining_stubs = [
-            schemas.AllowedAction.COLLECT_FEEDBACK,
-            schemas.AllowedAction.GROW_MEMBERSHIP,
-            schemas.AllowedAction.MAINTAIN_ACTIVITY,
-            schemas.AllowedAction.REACTIVATE_COMMUNITY,
-        ]
+    def test_09_reactivate_community_action_causes_zero_side_effects(self):
+        """Executing REACTIVATE_COMMUNITY causes strictly zero side effects."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={"notes": "check"})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
 
-        for action_enum in remaining_stubs:
-            req = schemas.ActionRequest(action=action_enum.value, parameters={"notes": "stub check"})
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+
+
+class TestCollectFeedbackActionExecution(unittest.TestCase):
+    """
+    Step 9.6 Test Suite: Concrete COLLECT_FEEDBACK Action Execution
+    - Identifies eligible completed event(s) and prepares feedback requests
+    - Auto-resolves most recent completed event if event_id is omitted
+    - Rejects non-completed events (status != COMPLETED)
+    - Rejects invalid/non-existent event_id
+    - Rejects event outside community
+    - Rejects unauthorized non-member requester
+    - Automatically excludes participants who already submitted feedback
+    - Clean zero-result when no eligible participants remain
+    - Zero fake feedback rows created (zero unintended DB mutation)
+    - Remaining 3 actions remain controlled READY stubs
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.db: Session = SessionLocal()
+        cls.ts = int(time_mod.time() * 1000)
+        cls.pwd = "Password@123"
+
+        # 1. Setup Host & Community
+        email_host = f"feedback_host_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_host, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.host = cls.db.query(models.User).filter(models.User.email == email_host).first()
+
+        cls.community = models.Community(
+            name=f"Feedback_Comm_{cls.ts}",
+            description="Testing COLLECT_FEEDBACK execution",
+            created_by=cls.host.user_id,
+        )
+        cls.db.add(cls.community)
+        cls.db.commit()
+        cls.db.refresh(cls.community)
+
+        cls.db.add(models.CommunityMember(
+            community_id=cls.community.community_id,
+            user_id=cls.host.user_id,
+            role="MEMBER",
+        ))
+        cls.db.commit()
+
+        # 2. Setup Attendees (Community Members)
+        email_att1 = f"feedback_att1_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_att1, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.attendee1 = cls.db.query(models.User).filter(models.User.email == email_att1).first()
+
+        email_att2 = f"feedback_att2_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_att2, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.attendee2 = cls.db.query(models.User).filter(models.User.email == email_att2).first()
+
+        for att in [cls.attendee1, cls.attendee2]:
+            cls.db.add(models.CommunityMember(
+                community_id=cls.community.community_id,
+                user_id=att.user_id,
+                role="MEMBER",
+            ))
+        cls.db.commit()
+
+        # 3. Setup Outsider (Non-member)
+        email_out = f"feedback_out_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_out, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.outsider = cls.db.query(models.User).filter(models.User.email == email_out).first()
+
+        # 4. Activity
+        cls.activity = cls.db.query(models.Activity).first()
+
+        # 5. Completed Event for Community
+        cls.completed_event = models.Event(
+            activity_id=cls.activity.activity_id,
+            host_id=cls.host.user_id,
+            title=f"Completed Badminton Match {cls.ts}",
+            event_date=date.today() - timedelta(days=2),
+            start_time=time(18, 0),
+            end_time=time(20, 0),
+            max_capacity=8,
+            status="COMPLETED",
+        )
+        cls.db.add(cls.completed_event)
+        cls.db.flush()
+
+        # Add attendees as confirmed participants
+        for att in [cls.attendee1, cls.attendee2]:
+            cls.db.add(models.EventParticipant(
+                event_id=cls.completed_event.event_id,
+                user_id=att.user_id,
+                status="CONFIRMED",
+            ))
+        cls.db.commit()
+
+        # 6. Non-completed Event (PUBLISHED status)
+        cls.published_event = models.Event(
+            activity_id=cls.activity.activity_id,
+            host_id=cls.host.user_id,
+            title=f"Future Published Event {cls.ts}",
+            event_date=date.today() + timedelta(days=3),
+            start_time=time(18, 0),
+            end_time=time(20, 0),
+            max_capacity=8,
+            status="PUBLISHED",
+        )
+        cls.db.add(cls.published_event)
+        cls.db.commit()
+
+        # 7. Outsider Event (Hosted by someone outside community)
+        cls.outsider_event = models.Event(
+            activity_id=cls.activity.activity_id,
+            host_id=cls.outsider.user_id,
+            title=f"Outsider Completed Event {cls.ts}",
+            event_date=date.today() - timedelta(days=1),
+            start_time=time(10, 0),
+            end_time=time(12, 0),
+            max_capacity=8,
+            status="COMPLETED",
+        )
+        cls.db.add(cls.outsider_event)
+        cls.db.commit()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+
+    def test_01_valid_completed_event_prepares_feedback_requests(self):
+        """COLLECT_FEEDBACK on completed event prepares structured feedback requests for eligible attendees."""
+        req = schemas.ActionRequest(
+            action="COLLECT_FEEDBACK",
+            parameters={"event_id": self.completed_event.event_id},
+            reason="Gather attendee reviews after event completion",
+        )
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(exec_res.action, "COLLECT_FEEDBACK")
+        self.assertIn("Successfully prepared feedback requests", exec_res.message)
+        self.assertIsNotNone(exec_res.executed_at)
+
+        details = exec_res.details
+        self.assertEqual(details["event_id"], self.completed_event.event_id)
+        self.assertEqual(details["eligible_participant_count"], 2)
+        self.assertEqual(set(details["eligible_participant_ids"]), {self.attendee1.user_id, self.attendee2.user_id})
+        self.assertEqual(details["delivery_status"], "PREPARED_FOR_DELIVERY")
+
+        requests = details["prepared_feedback_requests"]
+        self.assertEqual(len(requests), 2)
+        for req_item in requests:
+            self.assertEqual(req_item["event_id"], self.completed_event.event_id)
+            self.assertTrue(req_item["feedback_requested"])
+            self.assertEqual(req_item["status"], "PREPARED")
+            self.assertEqual(req_item["channel"], "IN_APP")
+            self.assertEqual(req_item["community_id"], self.community.community_id)
+
+    def test_02_omitted_event_id_resolves_most_recent_completed_event(self):
+        """When event_id is omitted, handler automatically resolves the community's latest completed event."""
+        req = schemas.ActionRequest(action="COLLECT_FEEDBACK", parameters={})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(exec_res.details["event_id"], self.completed_event.event_id)
+
+    def test_03_non_completed_event_rejected(self):
+        """COLLECT_FEEDBACK on non-completed event (e.g. PUBLISHED) is rejected."""
+        req = schemas.ActionRequest(
+            action="COLLECT_FEEDBACK",
+            parameters={"event_id": self.published_event.event_id},
+        )
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+        self.assertEqual(exec_res.details.get("reason"), "event_not_completed")
+        self.assertIn("only completed events are eligible", exec_res.message.lower())
+
+    def test_04_invalid_event_id_rejected(self):
+        """Non-existent event_id is rejected safely."""
+        req = schemas.ActionRequest(
+            action="COLLECT_FEEDBACK",
+            parameters={"event_id": 999999},
+        )
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+        self.assertEqual(exec_res.details.get("reason"), "event_not_found")
+
+    def test_05_event_outside_community_rejected(self):
+        """Event not belonging to this community is rejected."""
+        req = schemas.ActionRequest(
+            action="COLLECT_FEEDBACK",
+            parameters={"event_id": self.outsider_event.event_id},
+        )
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+        self.assertEqual(exec_res.details.get("reason"), "event_outside_community")
+        self.assertIn("does not belong to community", exec_res.message.lower())
+
+    def test_06_non_member_requester_rejected(self):
+        """Non-member cannot execute COLLECT_FEEDBACK."""
+        req = schemas.ActionRequest(action="COLLECT_FEEDBACK", parameters={"event_id": self.completed_event.event_id})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.outsider.user_id, val_res)
+        self.assertFalse(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.outsider.user_id, val_res, auth_res)
+
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+
+    def test_07_already_submitted_feedback_participants_excluded(self):
+        """Participants who have already submitted feedback for the event are excluded from new requests."""
+        # Insert feedback from attendee1
+        fb = models.Feedback(
+            event_id=self.completed_event.event_id,
+            reviewer_id=self.attendee1.user_id,
+            rating=5,
+            comment="Awesome doubles match!",
+        )
+        self.db.add(fb)
+        self.db.commit()
+
+        req = schemas.ActionRequest(
+            action="COLLECT_FEEDBACK",
+            parameters={"event_id": self.completed_event.event_id},
+        )
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        # attendee1 is excluded, only attendee2 remains
+        self.assertEqual(exec_res.details["eligible_participant_count"], 1)
+        self.assertEqual(exec_res.details["eligible_participant_ids"], [self.attendee2.user_id])
+        self.assertEqual(len(exec_res.details["prepared_feedback_requests"]), 1)
+        self.assertEqual(exec_res.details["prepared_feedback_requests"][0]["recipient_id"], self.attendee2.user_id)
+
+    def test_08_no_eligible_participants_returns_clean_zero_result(self):
+        """When all participants have submitted feedback, returns clean COMPLETED result with count=0."""
+        # Insert feedback from attendee2 as well
+        fb2 = models.Feedback(
+            event_id=self.completed_event.event_id,
+            reviewer_id=self.attendee2.user_id,
+            rating=4,
+            comment="Good game, let's play again!",
+        )
+        self.db.add(fb2)
+        self.db.commit()
+
+        req = schemas.ActionRequest(
+            action="COLLECT_FEEDBACK",
+            parameters={"event_id": self.completed_event.event_id},
+        )
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(exec_res.details["eligible_participant_count"], 0)
+        self.assertEqual(exec_res.details["prepared_feedback_requests"], [])
+        self.assertEqual(exec_res.details["delivery_status"], "ALL_FEEDBACK_SUBMITTED")
+        self.assertIn("all eligible participants", exec_res.message.lower())
+
+    def test_09_no_fake_feedback_rows_created(self):
+        """COLLECT_FEEDBACK causes zero database mutations and creates no fake feedback rows."""
+        initial_feedback_count = self.db.query(models.Feedback).count()
+        initial_events_count = self.db.query(models.Event).count()
+
+        req = schemas.ActionRequest(action="COLLECT_FEEDBACK", parameters={"event_id": self.completed_event.event_id})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+        self.assertTrue(exec_res.success)
+
+        self.assertEqual(self.db.query(models.Feedback).count(), initial_feedback_count, "No feedback rows should be inserted")
+        self.assertEqual(self.db.query(models.Event).count(), initial_events_count, "No event rows should be mutated")
+
+    def test_10_reactivate_community_action_causes_zero_side_effects(self):
+        """Executing REACTIVATE_COMMUNITY causes strictly zero feedback rows to be created."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={"notes": "check"})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        feedback_before = self.db.query(models.Feedback).count()
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(self.db.query(models.Feedback).count(), feedback_before)
+
+
+class TestGrowMembershipActionExecution(unittest.TestCase):
+    """
+    Step 9.7 Test Suite: Concrete GROW_MEMBERSHIP Action Execution
+    - Identifies eligible candidate users and prepares membership invitations
+    - Respects desired target_count / target_invites with safe bounds (capped at 20)
+    - Omitted target_count uses default (5)
+    - Custom invitation_message is validated and propagated to prepared payloads
+    - Strictly excludes existing community members and requester from candidates
+    - Evaluates compatibility (locality match, interest affinity) and ranks candidates
+    - Rejects unauthorized requester (non-member)
+    - Rejects non-existent community
+    - Rejects invalid target_count (<= 0)
+    - Returns clean zero-result when all active users are already enrolled (no eligible candidates)
+    - Strictly ZERO automatic user insertions into community_members table (unconsented additions forbidden)
+    - Strictly ZERO mutations across all core tables (users, communities, community_members, events, feedback)
+    - Strictly ZERO external messaging delivery side-effects
+    - The remaining 2 actions (MAINTAIN_ACTIVITY, REACTIVATE_COMMUNITY) remain controlled READY stubs.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.db: Session = SessionLocal()
+        cls.ts = int(time_mod.time() * 1000)
+        cls.pwd = "Password@123"
+
+        # 1. Setup Host & Community
+        email_host = f"grow_host_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_host, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.host = cls.db.query(models.User).filter(models.User.email == email_host).first()
+
+        cls.community = models.Community(
+            name=f"Indiranagar_Badminton_Club_{cls.ts}",
+            description="A vibrant badminton and fitness community in Indiranagar, Bengaluru",
+            created_by=cls.host.user_id,
+        )
+        cls.db.add(cls.community)
+        cls.db.commit()
+        cls.db.refresh(cls.community)
+
+        cls.db.add(models.CommunityMember(
+            community_id=cls.community.community_id,
+            user_id=cls.host.user_id,
+            role="ADMIN",
+        ))
+
+        # 2. Existing peer member (must be excluded from invitations)
+        email_peer = f"grow_peer_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_peer, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.peer_member = cls.db.query(models.User).filter(models.User.email == email_peer).first()
+        cls.db.add(models.CommunityMember(
+            community_id=cls.community.community_id,
+            user_id=cls.peer_member.user_id,
+            role="MEMBER",
+        ))
+        cls.db.commit()
+
+        # Update host profile locality to Indiranagar
+        host_prof = cls.db.query(models.Profile).filter(models.Profile.user_id == cls.host.user_id).first()
+        if host_prof:
+            host_prof.approx_locality = "Indiranagar, Bengaluru"
+            cls.db.commit()
+
+        # Find or create Badminton interest
+        badminton_interest = cls.db.query(models.Interest).filter(models.Interest.name == "Badminton").first()
+        if not badminton_interest:
+            badminton_interest = models.Interest(name="Badminton", category="Sports")
+            cls.db.add(badminton_interest)
+            cls.db.commit()
+            cls.db.refresh(badminton_interest)
+        cls.badminton_interest = badminton_interest
+
+        # 3. Setup Candidate 1 (Locality match + Badminton interest -> Highest rank)
+        email_cand1 = f"grow_cand1_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_cand1, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.cand1 = cls.db.query(models.User).filter(models.User.email == email_cand1).first()
+        cand1_prof = cls.db.query(models.Profile).filter(models.Profile.user_id == cls.cand1.user_id).first()
+        if cand1_prof:
+            cand1_prof.display_name = f"Indiranagar Player {cls.ts}"
+            cand1_prof.approx_locality = "Indiranagar, Bengaluru"
+        cls.db.add(models.UserInterest(user_id=cls.cand1.user_id, interest_id=cls.badminton_interest.interest_id))
+        cls.db.commit()
+
+        # 4. Setup Candidate 2 (Badminton interest only, different locality -> Medium rank)
+        email_cand2 = f"grow_cand2_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_cand2, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.cand2 = cls.db.query(models.User).filter(models.User.email == email_cand2).first()
+        cand2_prof = cls.db.query(models.Profile).filter(models.Profile.user_id == cls.cand2.user_id).first()
+        if cand2_prof:
+            cand2_prof.display_name = f"Whitefield Player {cls.ts}"
+            cand2_prof.approx_locality = "Whitefield, Bengaluru"
+        cls.db.add(models.UserInterest(user_id=cls.cand2.user_id, interest_id=cls.badminton_interest.interest_id))
+        cls.db.commit()
+
+        # 5. Setup Candidate 3 (No matching interest, distant locality -> Baseline score)
+        email_cand3 = f"grow_cand3_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_cand3, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.cand3 = cls.db.query(models.User).filter(models.User.email == email_cand3).first()
+        cand3_prof = cls.db.query(models.Profile).filter(models.Profile.user_id == cls.cand3.user_id).first()
+        if cand3_prof:
+            cand3_prof.display_name = f"Jayanagar Player {cls.ts}"
+            cand3_prof.approx_locality = "Jayanagar, Bengaluru"
+        cls.db.commit()
+
+        # 6. Setup Inactive Candidate (Must be excluded)
+        email_inact = f"grow_inact_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_inact, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.inactive_user = cls.db.query(models.User).filter(models.User.email == email_inact).first()
+        cls.inactive_user.is_active = False
+        cls.db.commit()
+
+        # 7. Setup Outsider (Non-member for authorization rejection test)
+        email_out = f"grow_out_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_out, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.outsider = cls.db.query(models.User).filter(models.User.email == email_out).first()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+
+    def test_01_valid_growth_prepares_membership_invitations(self):
+        """Enrolled member requests GROW_MEMBERSHIP with target_count=2 -> prepares top ranked candidate invitations."""
+        req = schemas.ActionRequest(
+            action="GROW_MEMBERSHIP",
+            parameters={"target_count": 2},
+        )
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(exec_res.action, "GROW_MEMBERSHIP")
+        self.assertEqual(exec_res.community_id, self.community.community_id)
+
+        details = exec_res.details
+        self.assertEqual(details["target_count"], 2)
+        self.assertEqual(details["invited_candidate_count"], 2)
+        self.assertEqual(details["delivery_status"], "PREPARED_FOR_DELIVERY")
+
+        invitations = details["prepared_invitations"]
+        self.assertEqual(len(invitations), 2)
+        for inv in invitations:
+            self.assertEqual(inv["community_id"], self.community.community_id)
+            self.assertEqual(inv["status"], "PREPARED")
+            self.assertEqual(inv["channel"], "IN_APP")
+            self.assertIn("prepared_at", inv)
+            self.assertGreaterEqual(inv["match_score"], 50)
+            self.assertIsInstance(inv["match_reasons"], list)
+
+        # Top invitations should feature high compatibility match scores (>= 80)
+        self.assertGreater(invitations[0]["match_score"], 50)
+        self.assertTrue(any(inv["match_score"] >= 80 for inv in invitations))
+
+    def test_02_omitted_target_count_uses_default_limit(self):
+        """When target_count is omitted, defaults to 5 without failure."""
+        req = schemas.ActionRequest(action="GROW_MEMBERSHIP", parameters={})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(exec_res.details["target_count"], 5)
+        self.assertLessEqual(exec_res.details["invited_candidate_count"], 5)
+
+    def test_03_existing_community_members_strictly_excluded(self):
+        """All existing community members (including peer and host) are strictly excluded from candidates."""
+        req = schemas.ActionRequest(action="GROW_MEMBERSHIP", parameters={"target_count": 20})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        invited_ids = set(exec_res.details["invited_candidate_ids"])
+
+        # Neither host nor peer_member can be invited
+        self.assertNotIn(self.host.user_id, invited_ids)
+        self.assertNotIn(self.peer_member.user_id, invited_ids)
+
+    def test_04_inactive_users_strictly_excluded(self):
+        """Inactive accounts (is_active=False) are strictly excluded from invitations."""
+        req = schemas.ActionRequest(action="GROW_MEMBERSHIP", parameters={"target_count": 20})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        invited_ids = set(exec_res.details["invited_candidate_ids"])
+        self.assertNotIn(self.inactive_user.user_id, invited_ids)
+
+    def test_05_custom_invitation_message_is_propagated(self):
+        """Custom invitation_message is included in each prepared invitation payload."""
+        custom_msg = "Join our competitive weekend badminton crew!"
+        req = schemas.ActionRequest(
+            action="GROW_MEMBERSHIP",
+            parameters={"target_count": 2, "invitation_message": custom_msg},
+        )
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        for inv in exec_res.details["prepared_invitations"]:
+            self.assertEqual(inv["invitation_message"], custom_msg)
+
+    def test_06_non_member_requester_rejected(self):
+        """Requester not belonging to the community is rejected before candidate processing."""
+        req = schemas.ActionRequest(action="GROW_MEMBERSHIP", parameters={"target_count": 5})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.outsider.user_id, val_res)
+        self.assertFalse(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.outsider.user_id, val_res, auth_res)
+        self.assertFalse(exec_res.success)
+        self.assertIn("not a member", exec_res.message.lower())
+
+    def test_07_invalid_community_id_rejected(self):
+        """Non-existent community_id is rejected gracefully."""
+        req = schemas.ActionRequest(action="GROW_MEMBERSHIP", parameters={"target_count": 5})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, 9999999, self.host.user_id, val_res)
+        self.assertFalse(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, 9999999, self.host.user_id, val_res, auth_res)
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+
+    def test_08_invalid_target_count_rejected(self):
+        """Non-positive target_count is rejected by validation."""
+        req = schemas.ActionRequest(action="GROW_MEMBERSHIP", parameters={"target_count": -5})
+        val_res = validate_community_action_request(req)
+        self.assertFalse(val_res.is_valid)
+        self.assertIn("target_count must be a positive integer", val_res.errors[0])
+
+    def test_09_no_eligible_candidates_returns_clean_zero_result(self):
+        """When all active users in the system are enrolled in a community, returns clean COMPLETED result with count=0."""
+        temp_comm = models.Community(
+            name=f"Isolated_Full_Comm_{self.ts}",
+            description="All platform users enrolled",
+            created_by=self.host.user_id,
+        )
+        self.db.add(temp_comm)
+        self.db.commit()
+
+        # Enroll all active users into this temporary community
+        active_uids = [u.user_id for u in self.db.query(models.User).filter(models.User.is_active == True).all()]
+        for uid in active_uids:
+            self.db.add(models.CommunityMember(community_id=temp_comm.community_id, user_id=uid, role="MEMBER"))
+        self.db.commit()
+
+        try:
+            req = schemas.ActionRequest(action="GROW_MEMBERSHIP", parameters={"target_count": 5})
             val_res = validate_community_action_request(req)
-            self.assertTrue(val_res.is_valid)
+            auth_res = authorize_community_action(self.db, temp_comm.community_id, self.host.user_id, val_res)
+            exec_res = dispatch_community_action(self.db, temp_comm.community_id, self.host.user_id, val_res, auth_res)
 
+            self.assertTrue(exec_res.success)
+            self.assertEqual(exec_res.status, "COMPLETED")
+            self.assertEqual(exec_res.details["eligible_candidate_count"], 0)
+            self.assertEqual(exec_res.details["invited_candidate_count"], 0)
+            self.assertEqual(exec_res.details["prepared_invitations"], [])
+            self.assertEqual(exec_res.details["delivery_status"], "NO_ELIGIBLE_CANDIDATES")
+        finally:
+            self.db.query(models.CommunityMember).filter(models.CommunityMember.community_id == temp_comm.community_id).delete()
+            self.db.delete(temp_comm)
+            self.db.commit()
+
+    def test_10_zero_unintended_database_mutations_and_zero_fake_members(self):
+        """Zero DB writes occur: no community_members rows, no users, no fake records inserted."""
+        initial_counts = {
+            "community_members": self.db.query(models.CommunityMember).count(),
+            "users": self.db.query(models.User).count(),
+            "communities": self.db.query(models.Community).count(),
+            "events": self.db.query(models.Event).count(),
+            "feedback": self.db.query(models.Feedback).count(),
+        }
+
+        req = schemas.ActionRequest(action="GROW_MEMBERSHIP", parameters={"target_count": 3})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+
+        after_counts = {
+            "community_members": self.db.query(models.CommunityMember).count(),
+            "users": self.db.query(models.User).count(),
+            "communities": self.db.query(models.Community).count(),
+            "events": self.db.query(models.Event).count(),
+            "feedback": self.db.query(models.Feedback).count(),
+        }
+
+        self.assertEqual(initial_counts, after_counts, "GROW_MEMBERSHIP preparation must cause strictly zero DB writes")
+
+    def test_11_reactivate_community_action_causes_zero_mutations(self):
+        """Executing REACTIVATE_COMMUNITY causes strictly zero member rows to be added."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={"notes": "check"})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        members_before = self.db.query(models.CommunityMember).count()
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+        self.assertTrue(exec_res.success, f"Failed: status={exec_res.status}, msg={exec_res.message}, details={exec_res.details}")
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(self.db.query(models.CommunityMember).count(), members_before)
+
+
+class TestMaintainActivityActionExecution(unittest.TestCase):
+    """
+    Step 9.8 Test Suite: Concrete MAINTAIN_ACTIVITY Action Execution
+    - Healthy community -> maintenance payload prepared with forward plan
+    - Growing community -> maintenance payload prepared with forward plan
+    - No upcoming activity -> preparation still works (delivery_status='PREPARED')
+    - Existing upcoming activity -> avoids unnecessary duplicate immediate cadence (delivery_status='ACTIVITY_ALREADY_SCHEDULED')
+    - Custom recurring pattern (e.g. BIWEEKLY, MONTHLY) -> appropriately calculates cadence and title
+    - Invalid/blank recurring_pattern -> rejected
+    - Invalid community_id -> rejected
+    - Non-member requester -> rejected
+    - Unauthorized requester -> rejected
+    - No suitable activity in system -> clean NO_ACTIVITY_TO_MAINTAIN result
+    - Zero DB mutation: strictly zero events created and zero records mutated
+    - Remaining REACTIVATE_COMMUNITY action remains a controlled READY stub.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.db: Session = SessionLocal()
+        cls.ts = int(time_mod.time() * 1000)
+        cls.pwd = "Password@123"
+
+        # 1. Setup Host & Community
+        email_host = f"maintain_host_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_host, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.host = cls.db.query(models.User).filter(models.User.email == email_host).first()
+
+        cls.community = models.Community(
+            name=f"Indiranagar_Badminton_Club_{cls.ts}",
+            description="Active badminton community in Indiranagar, Bengaluru",
+            created_by=cls.host.user_id,
+        )
+        cls.db.add(cls.community)
+        cls.db.commit()
+        cls.db.refresh(cls.community)
+
+        cls.db.add(models.CommunityMember(
+            community_id=cls.community.community_id,
+            user_id=cls.host.user_id,
+            role="ADMIN",
+        ))
+
+        # 2. Add Peer Members
+        email_peer1 = f"maintain_p1_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_peer1, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.peer1 = cls.db.query(models.User).filter(models.User.email == email_peer1).first()
+
+        email_peer2 = f"maintain_p2_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_peer2, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.peer2 = cls.db.query(models.User).filter(models.User.email == email_peer2).first()
+
+        for peer in [cls.peer1, cls.peer2]:
+            cls.db.add(models.CommunityMember(
+                community_id=cls.community.community_id,
+                user_id=peer.user_id,
+                role="MEMBER",
+            ))
+        cls.db.commit()
+
+        # 3. Find or Create Activity
+        cls.activity = cls.db.query(models.Activity).first()
+        if not cls.activity:
+            cls.activity = models.Activity(
+                title="Weekend Badminton Doubles",
+                category="Sports",
+                description="Community badminton matches",
+            )
+            cls.db.add(cls.activity)
+            cls.db.commit()
+            cls.db.refresh(cls.activity)
+
+        # 4. Add a Past Event to link community to activity
+        cls.past_event = models.Event(
+            activity_id=cls.activity.activity_id,
+            host_id=cls.host.user_id,
+            title=f"Past Badminton Match {cls.ts}",
+            event_date=date.today() - timedelta(days=5),
+            start_time=time(18, 0),
+            end_time=time(20, 0),
+            max_capacity=10,
+            status="COMPLETED",
+        )
+        cls.db.add(cls.past_event)
+        cls.db.commit()
+        cls.db.refresh(cls.past_event)
+
+        # 5. Outsider (Non-member)
+        email_out = f"maintain_out_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_out, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.outsider = cls.db.query(models.User).filter(models.User.email == email_out).first()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+
+    def test_01_healthy_community_prepares_maintenance_payload(self):
+        """Enrolled member executes MAINTAIN_ACTIVITY -> generates forward maintenance plan for CREATE_EVENT."""
+        req = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res =  authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(exec_res.action, "MAINTAIN_ACTIVITY")
+        self.assertEqual(exec_res.community_id, self.community.community_id)
+
+        details = exec_res.details
+        self.assertEqual(details["delivery_status"], "PREPARED")
+        self.assertEqual(details["recurring_pattern"], "WEEKLY")
+        self.assertEqual(details["suggested_activity_id"], self.activity.activity_id)
+        self.assertEqual(details["suggested_activity_title"], self.activity.title)
+        self.assertIsNotNone(details["suggested_date"])
+        self.assertGreaterEqual(details["suggested_capacity"], 3)
+        self.assertIn("cadence_recommendation", details)
+
+        plan = details["maintenance_plan"]
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["action"], "CREATE_EVENT")
+        self.assertEqual(plan["parameters"]["activity_id"], self.activity.activity_id)
+        self.assertIn(self.community.name, plan["parameters"]["title"])
+
+    def test_02_growing_community_prepares_maintenance_payload(self):
+        """Growing community properly derives and packages maintenance recommendation."""
+        growing_comm = models.Community(
+            name=f"Growing_Comm_{self.ts}",
+            description="Rapidly expanding yoga club",
+            created_by=self.host.user_id,
+        )
+        self.db.add(growing_comm)
+        self.db.commit()
+        self.db.refresh(growing_comm)
+
+        self.db.add(models.CommunityMember(community_id=growing_comm.community_id, user_id=self.host.user_id, role="MEMBER"))
+        self.db.commit()
+
+        try:
+            req = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={"recurring_pattern": "BIWEEKLY"})
+            val_res = validate_community_action_request(req)
+            auth_res = authorize_community_action(self.db, growing_comm.community_id, self.host.user_id, val_res)
+            exec_res = dispatch_community_action(self.db, growing_comm.community_id, self.host.user_id, val_res, auth_res)
+
+            self.assertTrue(exec_res.success)
+            self.assertEqual(exec_res.status, "COMPLETED")
+            self.assertEqual(exec_res.details["recurring_pattern"], "BIWEEKLY")
+            self.assertIsNotNone(exec_res.details["maintenance_plan"])
+        finally:
+            self.db.query(models.CommunityMember).filter(models.CommunityMember.community_id == growing_comm.community_id).delete()
+            self.db.delete(growing_comm)
+            self.db.commit()
+
+    def test_03_no_upcoming_activity_prepares_standard_cadence(self):
+        """When no upcoming events exist, upcoming_events_count is 0 and delivery_status is PREPARED."""
+        req = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.details["upcoming_events_count"], 0)
+        self.assertEqual(exec_res.details["delivery_status"], "PREPARED")
+
+    def test_04_existing_upcoming_activity_avoids_duplicate_immediate_cadence(self):
+        """When an upcoming event is already scheduled in the near future, delivery_status indicates it and plans beyond."""
+        upcoming = models.Event(
+            activity_id=self.activity.activity_id,
+            host_id=self.host.user_id,
+            title=f"Upcoming Badminton Match {self.ts}",
+            event_date=date.today() + timedelta(days=2),
+            start_time=time(18, 0),
+            end_time=time(20, 0),
+            max_capacity=8,
+            status="PUBLISHED",
+        )
+        self.db.add(upcoming)
+        self.db.commit()
+        self.db.refresh(upcoming)
+
+        try:
+            req = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={"recurring_pattern": "WEEKLY"})
+            val_res = validate_community_action_request(req)
             auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
-            self.assertTrue(auth_res.is_authorized)
-
             exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
 
             self.assertTrue(exec_res.success)
-            self.assertEqual(exec_res.status, "READY")
-            self.assertEqual(exec_res.action, action_enum.value)
+            self.assertEqual(exec_res.status, "COMPLETED")
+            self.assertGreaterEqual(exec_res.details["upcoming_events_count"], 1)
+            self.assertEqual(exec_res.details["delivery_status"], "ACTIVITY_ALREADY_SCHEDULED")
+
+            # Forward maintenance plan schedules after the upcoming event (at least 7 days after upcoming event date)
+            suggested_date = date.fromisoformat(exec_res.details["suggested_date"])
+            self.assertGreater(suggested_date, upcoming.event_date)
+        finally:
+            self.db.delete(upcoming)
+            self.db.commit()
+
+    def test_05_custom_recurring_patterns_calculate_cadence(self):
+        """Custom recurring patterns (BIWEEKLY, MONTHLY) properly propagate to title and cadence date."""
+        req_bi = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={"recurring_pattern": "BIWEEKLY"})
+        val_bi = validate_community_action_request(req_bi)
+        auth_bi = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_bi)
+        exec_bi = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_bi, auth_bi)
+
+        self.assertTrue(exec_bi.success)
+        self.assertEqual(exec_bi.details["recurring_pattern"], "BIWEEKLY")
+        self.assertIn("Biweekly", exec_bi.details["maintenance_plan"]["parameters"]["title"])
+
+        req_mo = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={"recurring_pattern": "MONTHLY"})
+        val_mo = validate_community_action_request(req_mo)
+        auth_mo = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_mo)
+        exec_mo = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_mo, auth_mo)
+
+        self.assertTrue(exec_mo.success)
+        self.assertEqual(exec_mo.details["recurring_pattern"], "MONTHLY")
+        self.assertIn("Monthly", exec_mo.details["maintenance_plan"]["parameters"]["title"])
+
+    def test_06_blank_or_invalid_recurring_pattern_rejected(self):
+        """Blank or whitespace-only recurring_pattern is rejected by validation."""
+        req = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={"recurring_pattern": "   "})
+        val_res = validate_community_action_request(req)
+        self.assertFalse(val_res.is_valid)
+        self.assertIn("recurring_pattern cannot be blank", val_res.errors[0])
+
+    def test_07_invalid_community_id_rejected(self):
+        """Non-existent community_id is rejected gracefully."""
+        req = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, 9999999, self.host.user_id, val_res)
+        self.assertFalse(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, 9999999, self.host.user_id, val_res, auth_res)
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+
+    def test_08_non_member_requester_rejected(self):
+        """Requester not belonging to community is rejected before activity inspection."""
+        req = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.outsider.user_id, val_res)
+        self.assertFalse(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.outsider.user_id, val_res, auth_res)
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+        self.assertIn("not a member", exec_res.message.lower())
+
+    def test_09_no_suitable_activity_returns_clean_result(self):
+        """When no suitable activity exists, returns clean COMPLETED result with NO_ACTIVITY_TO_MAINTAIN status."""
+        with patch.object(self.db, "query") as mock_query:
+            # Setup a mock flow where activity lookup yields None
+            mock_comm_q = MagicMock()
+            mock_comm_q.filter.return_value.first.return_value = self.community
+
+            mock_mem_q = MagicMock()
+            mock_mem_q.filter.return_value.first.return_value = MagicMock(user_id=self.host.user_id)
+            mock_mem_q.filter.return_value.all.return_value = [MagicMock(user_id=self.host.user_id)]
+
+            def query_side_effect(model_cls, *args, **kwargs):
+                if model_cls == models.Community:
+                    return mock_comm_q
+                elif model_cls == models.CommunityMember:
+                    return mock_mem_q
+                elif model_cls == models.Event:
+                    m = MagicMock()
+                    m.filter.return_value.order_by.return_value.all.return_value = []
+                    m.filter.return_value.order_by.return_value.first.return_value = None
+                    return m
+                elif model_cls == models.Activity:
+                    m = MagicMock()
+                    m.filter.return_value.first.return_value = None
+                    m.all.return_value = []
+                    return m
+                return MagicMock()
+
+            mock_query.side_effect = query_side_effect
+
+            req = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={})
+            val_res = validate_community_action_request(req)
+            exec_res = _handle_maintain_activity_action(self.community.community_id, self.host.user_id, val_res.sanitized_parameters, self.db)
+
+            self.assertTrue(exec_res.success)
+            self.assertEqual(exec_res.status, "COMPLETED")
+            self.assertEqual(exec_res.details["delivery_status"], "NO_ACTIVITY_TO_MAINTAIN")
+            self.assertIsNone(exec_res.details["maintenance_plan"])
+
+    def test_10_zero_unintended_database_mutations_and_zero_event_creation(self):
+        """Executing MAINTAIN_ACTIVITY must cause strictly zero DB writes and zero automatic event scheduling."""
+        initial_counts = {
+            "events": self.db.query(models.Event).count(),
+            "event_participants": self.db.query(models.EventParticipant).count(),
+            "communities": self.db.query(models.Community).count(),
+            "community_members": self.db.query(models.CommunityMember).count(),
+            "users": self.db.query(models.User).count(),
+            "feedback": self.db.query(models.Feedback).count(),
+        }
+
+        req = schemas.ActionRequest(action="MAINTAIN_ACTIVITY", parameters={"recurring_pattern": "WEEKLY"})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+
+        after_counts = {
+            "events": self.db.query(models.Event).count(),
+            "event_participants": self.db.query(models.EventParticipant).count(),
+            "communities": self.db.query(models.Community).count(),
+            "community_members": self.db.query(models.CommunityMember).count(),
+            "users": self.db.query(models.User).count(),
+            "feedback": self.db.query(models.Feedback).count(),
+        }
+
+        self.assertEqual(initial_counts, after_counts, "MAINTAIN_ACTIVITY must cause strictly zero database mutations")
+
+    def test_11_reactivate_community_action_causes_zero_mutations(self):
+        """Executing REACTIVATE_COMMUNITY causes strictly zero database mutations."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={"notes": "check"})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.community.community_id, self.host.user_id, val_res, auth_res)
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+
+
+class TestReactivateCommunityActionExecution(unittest.TestCase):
+    """
+    Step 9.9 Test Suite: Concrete REACTIVATE_COMMUNITY Action Execution
+    - INACTIVE community -> targeted reactivation plan prepared for CREATE_EVENT
+    - AT_RISK community -> targeted reactivation plan prepared
+    - HEALTHY community -> clean NOT_REQUIRED / COMMUNITY_ALREADY_ACTIVE
+    - GROWING community -> clean NOT_REQUIRED / COMMUNITY_ALREADY_ACTIVE
+    - Invalid community_id -> rejected
+    - Non-member requester -> rejected
+    - Unauthenticated requester -> rejected
+    - No suitable activity in system -> clean NO_ACTIVITY_TO_REACTIVATE result
+    - Future proposed_date generated correctly (or user specified)
+    - Past proposed_date -> rejected
+    - Zero DB mutation: strictly zero events created and zero records mutated
+    - Existing actions (CREATE_EVENT, RE_ENGAGE_MEMBERS, COLLECT_FEEDBACK, GROW_MEMBERSHIP, MAINTAIN_ACTIVITY) remain intact.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.db: Session = SessionLocal()
+        cls.ts = int(time_mod.time() * 1000)
+        cls.pwd = "Password@123"
+
+        # 1. Setup Host User
+        email_host = f"react_host_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_host, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.host = cls.db.query(models.User).filter(models.User.email == email_host).first()
+
+        # 2. Activity
+        cls.activity = cls.db.query(models.Activity).first()
+        if not cls.activity:
+            interest = cls.db.query(models.Interest).first()
+            cls.activity = models.Activity(title="Badminton Tournament", interest_id=interest.interest_id if interest else 1, description="Competitive play")
+            cls.db.add(cls.activity)
+            cls.db.commit()
+            cls.db.refresh(cls.activity)
+
+        # 3. Setup INACTIVE Community (No recent events, older than 60 days)
+        cls.inactive_community = models.Community(
+            name=f"Dormant_Badminton_Club_{cls.ts}",
+            description="A dormant badminton group seeking reactivation",
+            created_by=cls.host.user_id,
+        )
+        cls.db.add(cls.inactive_community)
+        cls.db.commit()
+        cls.db.refresh(cls.inactive_community)
+
+        cls.db.add(models.CommunityMember(
+            community_id=cls.inactive_community.community_id,
+            user_id=cls.host.user_id,
+            role="ADMIN",
+        ))
+
+        # Add peer member to inactive community
+        email_p1 = f"react_p1_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_p1, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.peer1 = cls.db.query(models.User).filter(models.User.email == email_p1).first()
+        cls.db.add(models.CommunityMember(
+            community_id=cls.inactive_community.community_id,
+            user_id=cls.peer1.user_id,
+            role="MEMBER",
+        ))
+        cls.db.commit()
+
+        # Add a past event (60 days ago) to associate activity with inactive community
+        past_ev = models.Event(
+            activity_id=cls.activity.activity_id,
+            host_id=cls.host.user_id,
+            title=f"Old Badminton Event {cls.ts}",
+            event_date=date.today() - timedelta(days=60),
+            start_time=time(18, 0),
+            end_time=time(20, 0),
+            max_capacity=10,
+            status="COMPLETED",
+        )
+        cls.db.add(past_ev)
+        cls.db.commit()
+
+        # 4. Setup HEALTHY Community (Has dedicated host and recent completed event and active participants)
+        email_h_host = f"react_h_host_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_h_host, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.healthy_host = cls.db.query(models.User).filter(models.User.email == email_h_host).first()
+
+        email_h_peer = f"react_h_peer_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_h_peer, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.healthy_peer = cls.db.query(models.User).filter(models.User.email == email_h_peer).first()
+
+        cls.healthy_community = models.Community(
+            name=f"Vibrant_Fitness_Club_{cls.ts}",
+            description="A very active and healthy community",
+            created_by=cls.healthy_host.user_id,
+        )
+        cls.db.add(cls.healthy_community)
+        cls.db.commit()
+        cls.db.refresh(cls.healthy_community)
+
+        cls.db.add(models.CommunityMember(
+            community_id=cls.healthy_community.community_id,
+            user_id=cls.healthy_host.user_id,
+            role="ADMIN",
+        ))
+        cls.db.add(models.CommunityMember(
+            community_id=cls.healthy_community.community_id,
+            user_id=cls.healthy_peer.user_id,
+            role="MEMBER",
+        ))
+        cls.db.commit()
+
+        # Recent events for healthy community (last 3 days) hosted by healthy_host
+        for i in range(3):
+            ev = models.Event(
+                activity_id=cls.activity.activity_id,
+                host_id=cls.healthy_host.user_id,
+                title=f"Healthy Event {i} {cls.ts}",
+                event_date=date.today() - timedelta(days=i + 1),
+                start_time=time(18, 0),
+                end_time=time(20, 0),
+                max_capacity=10,
+                status="COMPLETED",
+            )
+            cls.db.add(ev)
+            cls.db.flush()
+            cls.db.add(models.EventParticipant(event_id=ev.event_id, user_id=cls.healthy_peer.user_id, status="CONFIRMED"))
+        cls.db.commit()
+
+        # 5. Outsider (Non-member)
+        email_out = f"react_out_{cls.ts}@test.com"
+        client.post("/auth/register", json={"email": email_out, "password": cls.pwd, "confirm_password": cls.pwd})
+        cls.outsider = cls.db.query(models.User).filter(models.User.email == email_out).first()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+
+    def test_01_inactive_community_prepares_reactivation_payload(self):
+        """Inactive community properly prepares a targeted reactivation action plan for CREATE_EVENT."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+        val_res = validate_community_action_request(req)
+        self.assertTrue(val_res.is_valid)
+
+        auth_res = authorize_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res)
+        self.assertTrue(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(exec_res.action, "REACTIVATE_COMMUNITY")
+        self.assertEqual(exec_res.community_id, self.inactive_community.community_id)
+
+        details = exec_res.details
+        self.assertEqual(details["delivery_status"], "PREPARED")
+        self.assertEqual(details["suggested_activity_id"], self.activity.activity_id)
+        self.assertIsNotNone(details["reactivation_date"])
+        self.assertIn("reason", details)
+
+        plan = details["reactivation_plan"]
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["action"], "CREATE_EVENT")
+        self.assertEqual(plan["parameters"]["activity_id"], self.activity.activity_id)
+        self.assertIn("Comeback Session", plan["parameters"]["title"])
+
+    def test_02_at_risk_community_prepares_reactivation_payload(self):
+        """AT_RISK community properly generates reactivation plan."""
+        with patch("main._generate_community_lifecycle_insight") as mock_insight:
+            mock_insight.return_value = {
+                "lifecycle_stage": "AT_RISK",
+                "health_status": "AT_RISK",
+                "health_score": 45,
+                "trend": "DECLINING",
+            }
+            req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+            val_res = validate_community_action_request(req)
+            auth_res = authorize_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res)
+            exec_res = dispatch_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res, auth_res)
+
+            self.assertTrue(exec_res.success)
+            self.assertEqual(exec_res.status, "COMPLETED")
+            self.assertEqual(exec_res.details["lifecycle_stage"], "AT_RISK")
+            self.assertEqual(exec_res.details["delivery_status"], "PREPARED")
+            self.assertIsNotNone(exec_res.details["reactivation_plan"])
+
+    def test_03_healthy_community_returns_not_required(self):
+        """Healthy community returns COMMUNITY_ALREADY_ACTIVE without preparing reactivation event."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.healthy_community.community_id, self.healthy_host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.healthy_community.community_id, self.healthy_host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        self.assertEqual(exec_res.status, "COMPLETED")
+        self.assertEqual(exec_res.details["delivery_status"], "COMMUNITY_ALREADY_ACTIVE")
+        self.assertIsNone(exec_res.details["reactivation_plan"])
+        self.assertIn("already active", exec_res.message.lower())
+
+    def test_04_growing_community_returns_not_required(self):
+        """GROWING community returns COMMUNITY_ALREADY_ACTIVE."""
+        with patch("main._generate_community_lifecycle_insight") as mock_insight:
+            mock_insight.return_value = {
+                "lifecycle_stage": "GROWING",
+                "health_status": "GROWING",
+                "health_score": 95,
+                "trend": "IMPROVING",
+            }
+            req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+            val_res = validate_community_action_request(req)
+            auth_res = authorize_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res)
+            exec_res = dispatch_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res, auth_res)
+
+            self.assertTrue(exec_res.success)
+            self.assertEqual(exec_res.details["delivery_status"], "COMMUNITY_ALREADY_ACTIVE")
+            self.assertIsNone(exec_res.details["reactivation_plan"])
+
+    def test_05_invalid_community_id_rejected(self):
+        """Non-existent community_id is rejected gracefully."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, 9999999, self.host.user_id, val_res)
+        self.assertFalse(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, 9999999, self.host.user_id, val_res, auth_res)
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+
+    def test_06_non_member_requester_rejected(self):
+        """Requester not belonging to community is rejected before inspection."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.inactive_community.community_id, self.outsider.user_id, val_res)
+        self.assertFalse(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.inactive_community.community_id, self.outsider.user_id, val_res, auth_res)
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+        self.assertIn("not a member", exec_res.message.lower())
+
+    def test_07_unauthenticated_requester_rejected(self):
+        """Unauthenticated request (None requester_id) is blocked by authorization."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.inactive_community.community_id, None, val_res)
+        self.assertFalse(auth_res.is_authorized)
+
+        exec_res = dispatch_community_action(self.db, self.inactive_community.community_id, None, val_res, auth_res)
+        self.assertFalse(exec_res.success)
+        self.assertEqual(exec_res.status, "REJECTED")
+
+    def test_08_no_historical_activity_returns_clean_result(self):
+        """When no suitable activity exists, returns clean COMPLETED result with NO_ACTIVITY_TO_REACTIVATE status."""
+        with patch.object(self.db, "query") as mock_query:
+            mock_comm_q = MagicMock()
+            mock_comm_q.filter.return_value.first.return_value = self.inactive_community
+
+            mock_mem_q = MagicMock()
+            mock_mem_q.filter.return_value.first.return_value = MagicMock(user_id=self.host.user_id)
+            mock_mem_q.filter.return_value.all.return_value = [MagicMock(user_id=self.host.user_id)]
+
+            def query_side_effect(model_cls, *args, **kwargs):
+                if model_cls == models.Community:
+                    return mock_comm_q
+                elif model_cls == models.CommunityMember:
+                    return mock_mem_q
+                elif model_cls == models.Event:
+                    m = MagicMock()
+                    m.filter.return_value.order_by.return_value.all.return_value = []
+                    m.filter.return_value.order_by.return_value.first.return_value = None
+                    return m
+                elif model_cls == models.Activity:
+                    m = MagicMock()
+                    m.filter.return_value.first.return_value = None
+                    m.all.return_value = []
+                    return m
+                return MagicMock()
+
+            mock_query.side_effect = query_side_effect
+
+            req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+            val_res = validate_community_action_request(req)
+            exec_res = _handle_reactivate_community_action(self.inactive_community.community_id, self.host.user_id, val_res.sanitized_parameters, self.db)
+
+            self.assertTrue(exec_res.success)
+            self.assertEqual(exec_res.status, "COMPLETED")
+            self.assertEqual(exec_res.details["delivery_status"], "NO_ACTIVITY_TO_REACTIVATE")
+            self.assertIsNone(exec_res.details["reactivation_plan"])
+
+    def test_09_omitted_proposed_date_generates_future_date(self):
+        """Omitted proposed_date safely defaults to future date (14 days ahead)."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+        react_date = date.fromisoformat(exec_res.details["reactivation_date"])
+        self.assertGreater(react_date, date.today())
+
+    def test_10_past_proposed_date_rejected(self):
+        """Proposed date in the past is rejected by validation."""
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={"proposed_date": "2020-01-01"})
+        val_res = validate_community_action_request(req)
+        self.assertFalse(val_res.is_valid)
+        self.assertIn("cannot be in the past", val_res.errors[0])
+
+    def test_11_zero_unintended_database_mutations_and_zero_event_creation(self):
+        """Executing REACTIVATE_COMMUNITY causes strictly zero database writes and zero automatic event scheduling."""
+        initial_counts = {
+            "events": self.db.query(models.Event).count(),
+            "event_participants": self.db.query(models.EventParticipant).count(),
+            "communities": self.db.query(models.Community).count(),
+            "community_members": self.db.query(models.CommunityMember).count(),
+            "users": self.db.query(models.User).count(),
+            "feedback": self.db.query(models.Feedback).count(),
+        }
+
+        req = schemas.ActionRequest(action="REACTIVATE_COMMUNITY", parameters={})
+        val_res = validate_community_action_request(req)
+        auth_res = authorize_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res)
+        exec_res = dispatch_community_action(self.db, self.inactive_community.community_id, self.host.user_id, val_res, auth_res)
+
+        self.assertTrue(exec_res.success)
+
+        after_counts = {
+            "events": self.db.query(models.Event).count(),
+            "event_participants": self.db.query(models.EventParticipant).count(),
+            "communities": self.db.query(models.Community).count(),
+            "community_members": self.db.query(models.CommunityMember).count(),
+            "users": self.db.query(models.User).count(),
+            "feedback": self.db.query(models.Feedback).count(),
+        }
+
+        self.assertEqual(initial_counts, after_counts, "REACTIVATE_COMMUNITY must cause strictly zero database mutations")
+
+    def test_12_other_actions_remain_unaffected(self):
+        """All other 5 actions remain fully functional and uncompromised."""
+        for act in [
+            schemas.AllowedAction.CREATE_EVENT,
+            schemas.AllowedAction.RE_ENGAGE_MEMBERS,
+            schemas.AllowedAction.COLLECT_FEEDBACK,
+            schemas.AllowedAction.GROW_MEMBERSHIP,
+            schemas.AllowedAction.MAINTAIN_ACTIVITY,
+        ]:
+            req = schemas.ActionRequest(action=act.value, parameters={})
+            val_res = validate_community_action_request(req)
+            self.assertTrue(val_res.is_valid or len(val_res.errors) > 0)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+

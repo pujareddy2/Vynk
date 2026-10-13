@@ -171,17 +171,27 @@ def update_activity_embedding(activity_id: int, db: Session) -> Optional[List[fl
     return embedding
 
 
-def backfill_all_embeddings(db: Session) -> dict:
-    """Batch-generates embeddings for all active users and activity templates."""
-    users = db.query(models.User).filter(models.User.is_active.is_(True)).all()
+def backfill_all_embeddings(db: Session, limit: int = 50) -> dict:
+    """Batch-generates embeddings for active users and activity templates missing embeddings."""
+    unembedded_profiles = (
+        db.query(models.Profile)
+        .filter(models.Profile.embedding.is_(None))
+        .limit(limit)
+        .all()
+    )
     user_count = 0
-    for u in users:
-        update_user_embedding(u.user_id, db)
+    for p in unembedded_profiles:
+        update_user_embedding(p.user_id, db)
         user_count += 1
 
-    activities = db.query(models.Activity).all()
+    unembedded_activities = (
+        db.query(models.Activity)
+        .filter(models.Activity.embedding.is_(None))
+        .limit(limit)
+        .all()
+    )
     activity_count = 0
-    for a in activities:
+    for a in unembedded_activities:
         update_activity_embedding(a.activity_id, db)
         activity_count += 1
 

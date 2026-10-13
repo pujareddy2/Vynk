@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
@@ -13,6 +13,7 @@ class UserRegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6, description="Password (min 6 characters)")
     confirm_password: str = Field(..., min_length=6, description="Confirmation password")
+    approx_locality: Optional[str] = Field(None, description="Optional live locality detected upon profile registration")
 
     @model_validator(mode="after")
     def check_passwords_match(self):
@@ -996,5 +997,279 @@ class CommunityIntelligenceResponse(BaseModel):
         from_attributes = True
 
 
+# ============================================================================
+# 18. NOTIFICATION INBOX SCHEMAS (Step 10.1 Domain Contracts)
+# ============================================================================
+
+class NotificationType(str, Enum):
+    RE_ENGAGEMENT = "RE_ENGAGEMENT"
+    FEEDBACK_REQUEST = "FEEDBACK_REQUEST"
+    COMMUNITY_INVITATION = "COMMUNITY_INVITATION"
+    ACTIVITY_MAINTENANCE = "ACTIVITY_MAINTENANCE"
+    COMMUNITY_REACTIVATION = "COMMUNITY_REACTIVATION"
+    SYSTEM_ALERT = "SYSTEM_ALERT"
+
+
+class NotificationStatus(str, Enum):
+    UNREAD = "UNREAD"
+    READ = "READ"
+    DISMISSED = "DISMISSED"
+    ACCEPTED = "ACCEPTED"
+
+
+ACTIONABLE_NOTIFICATION_TYPES = {
+    NotificationType.COMMUNITY_INVITATION.value,
+    NotificationType.ACTIVITY_MAINTENANCE.value,
+    NotificationType.COMMUNITY_REACTIVATION.value,
+}
+
+INFORMATIONAL_NOTIFICATION_TYPES = {
+    NotificationType.RE_ENGAGEMENT.value,
+    NotificationType.FEEDBACK_REQUEST.value,
+    NotificationType.SYSTEM_ALERT.value,
+}
+
+
+def validate_notification_status_transition(
+    current_status: str,
+    new_status: str,
+    notification_type: str,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Step 10.1 Domain validation for notification lifecycle state transitions.
+    Rules:
+    1. READ, DISMISSED, ACCEPTED cannot transition back to UNREAD (READ -> UNREAD is prohibited).
+    2. Terminal states (DISMISSED, ACCEPTED) cannot transition to any other status.
+    3. ACCEPTED is strictly reserved for ACTIONABLE_NOTIFICATION_TYPES
+       (COMMUNITY_INVITATION, ACTIVITY_MAINTENANCE, COMMUNITY_REACTIVATION).
+       INFORMATIONAL types (RE_ENGAGEMENT, FEEDBACK_REQUEST, SYSTEM_ALERT) cannot be ACCEPTED.
+    4. UNREAD can transition to READ, DISMISSED, or ACCEPTED (if actionable).
+    5. READ can transition to DISMISSED or ACCEPTED (if actionable).
+    """
+    current_s = str(current_status.value if hasattr(current_status, "value") else current_status).strip().upper()
+    if "." in current_s:
+        current_s = current_s.split(".")[-1]
+
+    new_s = str(new_status.value if hasattr(new_status, "value") else new_status).strip().upper()
+    if "." in new_s:
+        new_s = new_s.split(".")[-1]
+
+    notif_type = str(notification_type.value if hasattr(notification_type, "value") else notification_type).strip().upper()
+    if "." in notif_type:
+        notif_type = notif_type.split(".")[-1]
+
+    if current_s in ["DISMISSED", "ACCEPTED"]:
+        return False, f"Notification is already in terminal state '{current_s}'."
+
+    if new_s == current_s:
+        return True, None
+
+    if new_s == "UNREAD":
+        return False, "Cannot transition read or resolved notification back to UNREAD."
+
+    if new_s == "ACCEPTED" and notif_type not in ACTIONABLE_NOTIFICATION_TYPES:
+        return False, f"Notification type '{notif_type}' is informational and cannot be accepted."
+
+    if current_s == "UNREAD" and new_s in ["READ", "DISMISSED", "ACCEPTED"]:
+        return True, None
+
+    if current_s == "READ" and new_s in ["DISMISSED", "ACCEPTED"]:
+        return True, None
+
+    return False, f"Invalid transition from '{current_s}' to '{new_s}'."
+
+
+class NotificationCreate(BaseModel):
+    recipient_user_id: int
+    notification_type: NotificationType
+    title: str = Field(..., min_length=1, max_length=200)
+    message: str = Field(..., min_length=1)
+    payload: Optional[Dict[str, Any]] = None
+    source_action: Optional[str] = None
+    related_community_id: Optional[int] = None
+    related_event_id: Optional[int] = None
+
+
+class NotificationResponse(BaseModel):
+    notification_id: int
+    recipient_user_id: int
+    notification_type: str
+    title: str
+    message: str
+    payload: Optional[Dict[str, Any]] = None
+    source_action: Optional[str] = None
+    related_community_id: Optional[int] = None
+    related_event_id: Optional[int] = None
+    is_read: bool
+    read_at: Optional[datetime] = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    is_stale: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class NotificationSummary(BaseModel):
+    total_count: int
+    unread_count: int
+
+
+class NotificationStatusUpdate(BaseModel):
+    status: NotificationStatus
+
+
+class NotificationInboxResponse(BaseModel):
+    notifications: List[NotificationResponse] = []
+    total: int
+    unread_count: int
+    limit: int
+    offset: int
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# 19. ACTION-AWARE NOTIFICATION PAYLOAD CONTRACTS (Step 10.5)
+# ============================================================================
+
+class BaseNotificationPayload(BaseModel):
+    actionable: bool = False
+    context: Optional[str] = None
+    target_action: Optional[str] = None
+    target_endpoint: Optional[str] = None
+
+
+class CommunityInvitationPayload(BaseNotificationPayload):
+    actionable: bool = True
+    community_id: int
+    community_name: str
+    inviter_user_id: Optional[int] = None
+    affinity_reasons: List[str] = []
+    target_action: str = "JOIN_COMMUNITY"
+    target_endpoint: str = ""
+
+    @model_validator(mode="after")
+    def set_endpoint(self):
+        if not self.target_endpoint:
+            self.target_endpoint = f"/communities/{self.community_id}/join"
+        return self
+
+
+class ActivityMaintenancePayload(BaseNotificationPayload):
+    actionable: bool = True
+    community_id: int
+    community_name: str
+    cadence: str = "WEEKLY"
+    suggested_activity_id: Optional[int] = None
+    suggested_activity_title: Optional[str] = None
+    target_action: str = "CREATE_EVENT"
+    target_endpoint: str = ""
+    action_plan: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def set_endpoint(self):
+        if not self.target_endpoint:
+            self.target_endpoint = f"/communities/{self.community_id}/actions/execute"
+        return self
+
+
+class CommunityReactivationPayload(BaseNotificationPayload):
+    actionable: bool = True
+    community_id: int
+    community_name: str
+    reactivation_date: str
+    suggested_activity_id: Optional[int] = None
+    suggested_activity_title: Optional[str] = None
+    target_action: str = "CREATE_EVENT"
+    target_endpoint: str = ""
+    action_plan: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def set_endpoint(self):
+        if not self.target_endpoint:
+            self.target_endpoint = f"/communities/{self.community_id}/actions/execute"
+        return self
+
+
+class FeedbackRequestPayload(BaseNotificationPayload):
+    actionable: bool = False
+    event_id: int
+    event_title: str
+    community_id: Optional[int] = None
+    target_endpoint: str = "/feedback"
+
+
+class ReEngagementPayload(BaseNotificationPayload):
+    actionable: bool = False
+    community_id: int
+    community_name: str
+    target_inactive_days: int = 14
+    target_endpoint: str = ""
+
+    @model_validator(mode="after")
+    def set_endpoint(self):
+        if not self.target_endpoint:
+            self.target_endpoint = f"/communities/{self.community_id}"
+        return self
+
+
+class SystemAlertPayload(BaseNotificationPayload):
+    actionable: bool = False
+    alert_code: Optional[str] = None
+
+
+def normalize_action_aware_payload(
+    notification_type: str,
+    raw_payload: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Step 10.5: Normalizes and validates action-aware notification payloads.
+    Guarantees:
+    - Actionable notifications (COMMUNITY_INVITATION, ACTIVITY_MAINTENANCE, COMMUNITY_REACTIVATION)
+      are tagged with actionable=True, verified required metadata, and target_action/endpoint.
+    - Informational notifications (FEEDBACK_REQUEST, RE_ENGAGEMENT, SYSTEM_ALERT)
+      are tagged with actionable=False.
+    """
+    notif_type = str(notification_type.value if hasattr(notification_type, "value") else notification_type).strip().upper()
+    if "." in notif_type:
+        notif_type = notif_type.split(".")[-1]
+    data = dict(raw_payload) if raw_payload else {}
+
+    if notif_type == NotificationType.COMMUNITY_INVITATION.value:
+        data["actionable"] = True
+        data.setdefault("target_action", "JOIN_COMMUNITY")
+        comm_id = data.get("community_id")
+        if comm_id is not None:
+            data.setdefault("target_endpoint", f"/communities/{comm_id}/join")
+        else:
+            data.setdefault("target_endpoint", "/communities")
+
+    elif notif_type in [NotificationType.ACTIVITY_MAINTENANCE.value, NotificationType.COMMUNITY_REACTIVATION.value]:
+        data["actionable"] = True
+        data.setdefault("target_action", "CREATE_EVENT")
+        comm_id = data.get("community_id")
+        if comm_id is not None:
+            data.setdefault("target_endpoint", f"/communities/{comm_id}/actions/execute")
+        else:
+            data.setdefault("target_endpoint", "/events")
+
+    elif notif_type == NotificationType.FEEDBACK_REQUEST.value:
+        data["actionable"] = False
+        data.setdefault("target_endpoint", "/feedback")
+
+    elif notif_type == NotificationType.RE_ENGAGEMENT.value:
+        data["actionable"] = False
+        comm_id = data.get("community_id")
+        if comm_id is not None:
+            data.setdefault("target_endpoint", f"/communities/{comm_id}")
+
+    else:
+        # Default SYSTEM_ALERT or generic
+        data["actionable"] = False
+
+    return data
 
 

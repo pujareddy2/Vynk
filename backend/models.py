@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    JSON,
     Numeric,
     String,
     Text,
@@ -55,6 +56,7 @@ class User(Base):
     given_feedbacks = relationship("Feedback", back_populates="reviewer", cascade="all, delete-orphan")
     initiated_proposals = relationship("GroupProposal", foreign_keys="GroupProposal.initiator_user_id", back_populates="initiator", cascade="all, delete-orphan")
     proposal_invitations = relationship("GroupProposalMember", back_populates="user", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="recipient", cascade="all, delete-orphan")
 
 
 # ============================================================================
@@ -168,7 +170,7 @@ class UserAvailability(Base):
 
     availability_id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
-    day_of_week = Column(String(20), nullable=False)  # 'Monday', 'Saturday', 'Weekend', etc.
+    day_of_week = Column(String(100), nullable=False)  # 'Monday', 'Saturday', 'Weekend', etc.
     start_time = Column(Time, nullable=True)
     end_time = Column(Time, nullable=True)
 
@@ -574,3 +576,66 @@ class GroupProposalMember(Base):
     # Relationships
     proposal = relationship("GroupProposal", back_populates="members")
     user = relationship("User", back_populates="proposal_invitations")
+
+
+# ============================================================================
+# 23. NOTIFICATIONS (In-App Notification & Delivery Inbox)
+# ============================================================================
+
+class Notification(Base):
+    """
+    In-app user notification and delivery inbox (Table 23).
+    Stores structured alerts, member re-engagements, invitations,
+    feedback prompts, and action recommendations.
+    """
+    __tablename__ = "notifications"
+
+    notification_id = Column(Integer, primary_key=True, autoincrement=True)
+    recipient_user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
+    notification_type = Column(String(50), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    message = Column(Text, nullable=False)
+    payload = Column(JSON, nullable=True)
+    source_action = Column(String(50), nullable=True, index=True)
+    related_community_id = Column(Integer, ForeignKey("communities.community_id", ondelete="SET NULL"), nullable=True, index=True)
+    related_event_id = Column(Integer, ForeignKey("events.event_id", ondelete="SET NULL"), nullable=True, index=True)
+    is_read = Column(Boolean, default=False, nullable=False, index=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(30), default="UNREAD", nullable=False, index=True)  # 'UNREAD', 'READ', 'DISMISSED', 'ACCEPTED'
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    recipient = relationship("User", back_populates="notifications")
+    community = relationship("Community")
+    event = relationship("Event")
+
+    @property
+    def is_stale(self) -> bool:
+        """
+        Step 10.8.3: Dynamic stale detection for actionable payloads.
+        Returns True if target action date has passed, without modifying table schema or database status.
+        """
+        if self.notification_type not in ["COMMUNITY_INVITATION", "ACTIVITY_MAINTENANCE", "COMMUNITY_REACTIVATION"]:
+            return False
+        payload = self.payload or {}
+        action_plan = payload.get("action_plan") or {}
+        params = action_plan.get("parameters") or payload.get("parameters") or {}
+        raw_date = (
+            params.get("event_date")
+            or payload.get("reactivation_date")
+            or payload.get("date")
+        )
+        if raw_date:
+            try:
+                from datetime import date
+                return date.fromisoformat(str(raw_date)[:10]) < date.today()
+            except Exception:
+                pass
+        return False
+
