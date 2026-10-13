@@ -1812,17 +1812,7 @@ class TestNotificationStep9ActionIntegration(unittest.TestCase):
 
     def test_05_invalid_action_payload_rejected_by_step9_validation(self):
         """Notification containing invalid parameters is rejected by Step 9 validation."""
-        bad_plan = {
-            "action": "CREATE_EVENT",
-            "parameters": {
-                "activity_id": self.activity.activity_id,
-                "event_date": "2026-10-25",
-                "start_time": "18:00:00",
-                "end_time": "20:00:00",
-                "title": "Bad Params Event",
-                "max_capacity": -10,
-            },
-        }
+        bad_plan = self._make_action_plan(days_ahead=5, capacity=-10, title_suffix="Bad Params")
         notif = create_notification(self.db, {
             "recipient_user_id": self.user1.user_id,
             "notification_type": "ACTIVITY_MAINTENANCE",
