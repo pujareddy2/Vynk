@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { eventService } from "@/services/event.service";
+import { eventService, EventCreatePayload } from "@/services/event.service";
 
 export function useEvents() {
   const [loading, setLoading] = useState(false);
@@ -11,22 +11,22 @@ export function useEvents() {
 
     try {
       return await eventService.getEvents();
-    } catch (err) {
-      setError("Failed to load events");
+    } catch (err: any) {
+      setError(err?.message || "Failed to load events");
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  const createEvent = async () => {
+  const createEvent = async (payload: EventCreatePayload) => {
     setLoading(true);
     setError(null);
 
     try {
-      return await eventService.createEvent();
-    } catch (err) {
-      setError("Failed to create event");
+      return await eventService.createEvent(payload);
+    } catch (err: any) {
+      setError(err?.message || "Failed to create event");
       throw err;
     } finally {
       setLoading(false);

@@ -5,28 +5,28 @@ export function useIntent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submitIntent = async () => {
+  const submitIntent = async (prompt: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      return await intentService.submitIntent();
-    } catch (err) {
-      setError("Failed to submit intent");
+      return await intentService.understandIntent(prompt);
+    } catch (err: any) {
+      setError(err?.message || "Failed to submit intent");
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  const getIntent = async () => {
+  const getIntent = async (query: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      return await intentService.getIntent();
-    } catch (err) {
-      setError("Failed to load intent");
+      return await intentService.searchByIntent(query);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load intent");
       throw err;
     } finally {
       setLoading(false);

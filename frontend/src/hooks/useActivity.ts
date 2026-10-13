@@ -5,14 +5,14 @@ export function useActivity() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const getActivity = async () => {
+  const getActivity = async (activityId: number) => {
     setLoading(true);
     setError(null);
 
     try {
-      return await activityService.getActivity();
-    } catch (err) {
-      setError("Failed to load activity");
+      return await activityService.getActivity(activityId);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load activity");
       throw err;
     } finally {
       setLoading(false);

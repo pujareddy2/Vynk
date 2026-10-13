@@ -5,46 +5,36 @@ export function useAuth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const login = async () => {
+  const login = async (email: string, pass: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      await authService.login();
-    } catch (err) {
-      setError("Login failed");
+      return await authService.login(email, pass);
+    } catch (err: any) {
+      setError(err?.message || "Login failed");
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  const signup = async () => {
+  const signup = async (email: string, pass: string, confirm?: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      await authService.signup();
-    } catch (err) {
-      setError("Signup failed");
+      return await authService.register(email, pass, confirm);
+    } catch (err: any) {
+      setError(err?.message || "Signup failed");
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  const logout = async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      await authService.logout();
-    } catch (err) {
-      setError("Logout failed");
-      throw err;
-    } finally {
-      setLoading(false);
-    }
+  const logout = () => {
+    authService.logout();
   };
 
   return {
@@ -53,5 +43,6 @@ export function useAuth() {
     logout,
     loading,
     error,
+    isAuthenticated: authService.isAuthenticated,
   };
 }

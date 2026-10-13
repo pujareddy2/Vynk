@@ -11,22 +11,22 @@ export function useMatches() {
 
     try {
       return await matchingService.getMatches();
-    } catch (err) {
-      setError("Failed to load matches");
+    } catch (err: any) {
+      setError(err?.message || "Failed to load matches");
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  const getMatch = async () => {
+  const getPeopleMatches = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      return await matchingService.getMatch();
-    } catch (err) {
-      setError("Failed to load match");
+      return await matchingService.getPeopleMatches();
+    } catch (err: any) {
+      setError(err?.message || "Failed to load people matches");
       throw err;
     } finally {
       setLoading(false);
@@ -35,7 +35,8 @@ export function useMatches() {
 
   return {
     getMatches,
-    getMatch,
+    getPeopleMatches,
+    getMatch: getMatches,
     loading,
     error,
   };

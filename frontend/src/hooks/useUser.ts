@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { userService } from "@/services/user.service";
+import { userService, ProfileUpdatePayload } from "@/services/user.service";
 
 export function useUser() {
   const [loading, setLoading] = useState(false);
@@ -10,23 +10,23 @@ export function useUser() {
     setError(null);
 
     try {
-      return await userService.getProfile();
-    } catch (err) {
-      setError("Failed to load profile");
+      return await userService.getProfileMe();
+    } catch (err: any) {
+      setError(err?.message || "Failed to load profile");
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  const updateProfile = async () => {
+  const updateProfile = async (payload: ProfileUpdatePayload) => {
     setLoading(true);
     setError(null);
 
     try {
-      return await userService.updateProfile();
-    } catch (err) {
-      setError("Failed to update profile");
+      return await userService.updateProfile(payload);
+    } catch (err: any) {
+      setError(err?.message || "Failed to update profile");
       throw err;
     } finally {
       setLoading(false);
@@ -35,6 +35,7 @@ export function useUser() {
 
   return {
     getProfile,
+    getProfileMe: getProfile,
     updateProfile,
     loading,
     error,

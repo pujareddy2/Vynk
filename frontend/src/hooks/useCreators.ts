@@ -11,22 +11,22 @@ export function useCreators() {
 
     try {
       return await creatorService.getCreators();
-    } catch (err) {
-      setError("Failed to load creators");
+    } catch (err: any) {
+      setError(err?.message || "Failed to load creators");
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  const getCreator = async () => {
+  const followCreator = async (creatorId: number) => {
     setLoading(true);
     setError(null);
 
     try {
-      return await creatorService.getCreator();
-    } catch (err) {
-      setError("Failed to load creator");
+      return await creatorService.followCreator(creatorId);
+    } catch (err: any) {
+      setError(err?.message || "Failed to follow creator");
       throw err;
     } finally {
       setLoading(false);
@@ -35,7 +35,7 @@ export function useCreators() {
 
   return {
     getCreators,
-    getCreator,
+    followCreator,
     loading,
     error,
   };

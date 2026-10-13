@@ -11,22 +11,22 @@ export function useActivities() {
 
     try {
       return await activityService.getActivities();
-    } catch (err) {
-      setError("Failed to load activities");
+    } catch (err: any) {
+      setError(err?.message || "Failed to load activities");
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  const createActivity = async () => {
+  const createActivity = async (payload: { interest_id: number; title: string; description?: string }) => {
     setLoading(true);
     setError(null);
 
     try {
-      return await activityService.createActivity();
-    } catch (err) {
-      setError("Failed to create activity");
+      return await activityService.createActivity(payload);
+    } catch (err: any) {
+      setError(err?.message || "Failed to create activity");
       throw err;
     } finally {
       setLoading(false);
