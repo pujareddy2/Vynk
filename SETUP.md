@@ -36,17 +36,40 @@ A clean, reproducible guide to run the FastAPI backend, PostgreSQL database, Nex
 
 ## 🚀 2. Running Locally
 
-### Backend (FastAPI + PostgreSQL)
-PostgreSQL connection configured in `backend/.env` under `DATABASE_URL`:
-- **Connection:** `postgresql://postgres:puja%40555@localhost:5555/major`
+### Backend Setup (FastAPI + PostgreSQL)
 
+Follow these simple steps to set up the backend and database:
+
+#### Step 1: Install Python Dependencies
 ```bash
 cd backend
 python -m pip install -r requirements.txt
+```
+
+#### Step 2: Configure Environment Variables
+Copy the template file to create your `.env`:
+- **Windows (CMD / PowerShell):** `copy .env.example .env`
+- **Mac / Linux:** `cp .env.example .env`
+
+Open `backend/.env` and update your PostgreSQL connection URL with your password and port:
+```env
+DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/major
+```
+*(Make sure an empty database named `major` exists in your PostgreSQL).*
+
+#### Step 3: Auto-Build Database Tables & Relations (One-Time Setup)
+Run the automated setup script. This automatically enables the `pgvector` extension, creates all **23 tables & foreign key relations**, and seeds all master interests and skills:
+```bash
+python init_db.py
+```
+> **Tip for Windows:** If you haven't installed pgvector yet, right-click `install_pgvector.bat` and select **Run as Administrator** once.
+
+#### Step 4: Start the Backend Server
+```bash
 python main.py
 ```
 - **Health Check:** [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
-- **Interactive Swagger UI:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- **Interactive Swagger UI (API Docs):** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 - **Interactive ReDoc:** [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
 
 ### Frontend (Next.js)
