@@ -15,7 +15,7 @@ interface DisplayNotification {
   type: string;
   actionable?: boolean;
   status: "UNREAD" | "READ" | "ACCEPTED" | "DISMISSED";
-  actionPayload?: any;
+  actionPayload?: Record<string, unknown> | null;
 }
 
 const fallbackNotifications: DisplayNotification[] = [
@@ -156,23 +156,28 @@ export default function NotificationsPage() {
       try {
         setLoading(true);
         const res = await notificationService.getNotifications(50, 0);
-        if (res && res.notifications && res.notifications.length > 0) {
-          const mapped: DisplayNotification[] = res.notifications.map((n: BackendNotif) => ({
-            id: n.notification_id,
-            title: n.title,
-            message: n.message,
-            time: formatRelativeTime(n.created_at),
-            unread: !n.is_read && n.status === "UNREAD",
-            icon: getIconForType(n.notification_type),
-            type: n.notification_type,
-            actionable: !!n.action_type || n.notification_type.includes("MAINTENANCE") || n.notification_type.includes("INVITATION"),
-            status: n.status,
-            actionPayload: n.payload,
-          }));
-          setItems(mapped);
+        if (res && Array.isArray(res.notifications)) {
+          if (res.notifications.length > 0) {
+            const mapped: DisplayNotification[] = res.notifications.map((n: BackendNotif) => ({
+              id: n.notification_id,
+              title: n.title,
+              message: n.message,
+              time: formatRelativeTime(n.created_at),
+              unread: !n.is_read && n.status === "UNREAD",
+              icon: getIconForType(n.notification_type),
+              type: n.notification_type,
+              actionable: !!n.action_type || n.notification_type.includes("MAINTENANCE") || n.notification_type.includes("INVITATION"),
+              status: n.status,
+              actionPayload: n.payload,
+            }));
+            setItems(mapped);
+          } else {
+            // User is authenticated and genuinely has 0 notifications from backend
+            setItems([]);
+          }
         }
       } catch {
-        // Unauthenticated or network error — fallback gracefully
+        // Unauthenticated or network error — fallback gracefully for display
       } finally {
         setLoading(false);
       }
@@ -183,6 +188,9 @@ export default function NotificationsPage() {
   const unreadCount = items.filter((n) => n.unread).length;
 
   const markAllAsRead = async () => {
+    const unreadItems = items.filter((n) => n.unread);
+    if (unreadItems.length === 0) return;
+
     setItems((prev) =>
       prev.map((n) => ({
         ...n,
@@ -190,49 +198,69 @@ export default function NotificationsPage() {
         status: n.status === "UNREAD" ? "READ" : n.status,
       }))
     );
-    // Asynchronously sync unread items to backend
-    items.filter((n) => n.unread).forEach((n) => {
-      notificationService.markAsRead(n.id).catch(() => {});
-    });
+
+    try {
+      await Promise.allSettled(
+        unreadItems.map((n) => notificationService.markAsRead(n.id))
+      );
+    } finally {
+      await notificationService.refreshUnreadCount();
+    }
   };
 
   const markAsRead = async (id: number) => {
+    const target = items.find((n) => n.id === id);
+    if (!target || !target.unread) return;
+
     setItems((prev) =>
       prev.map((n) => (n.id === id ? { ...n, unread: false, status: n.status === "UNREAD" ? "READ" : n.status } : n))
     );
     try {
       await notificationService.markAsRead(id);
-    } catch {}
+    } catch {
+      // Revert if request failed
+      setItems((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, unread: true, status: target.status } : n))
+      );
+    }
   };
 
   const handleAccept = async (id: number) => {
-    setItems((prev) =>
-      prev.map((n) =>
-        n.id === id
-          ? { ...n, status: "ACCEPTED", unread: false }
-          : n
-      )
-    );
+    const target = items.find((n) => n.id === id);
+    if (!target) return;
+
     try {
       const res = await notificationService.acceptNotification(id, true);
-      setActionSuccessMsg(res?.message || "Action executed successfully!");
+      setItems((prev) =>
+        prev.map((n) =>
+          n.id === id
+            ? { ...n, status: "ACCEPTED", unread: false }
+            : n
+        )
+      );
+      const resObj = typeof res === "object" && res !== null && "message" in res ? (res as { message: string }).message : null;
+      setActionSuccessMsg(resObj || "Action executed successfully!");
       setTimeout(() => setActionSuccessMsg(null), 3000);
-    } catch (e: any) {
-      setActionSuccessMsg(e?.message || "Action accepted.");
+    } catch (e: unknown) {
+      const errObj = typeof e === "object" && e !== null && "message" in e ? (e as { message: string }).message : null;
+      setActionSuccessMsg(errObj || "Failed to execute action.");
       setTimeout(() => setActionSuccessMsg(null), 3000);
     }
   };
 
   const handleDismiss = async (id: number) => {
-    setItems((prev) =>
-      prev.map((n) =>
-        n.id === id
-          ? { ...n, status: "DISMISSED", unread: false }
-          : n
-      )
-    );
+    const target = items.find((n) => n.id === id);
+    if (!target) return;
+
     try {
       await notificationService.dismissNotification(id);
+      setItems((prev) =>
+        prev.map((n) =>
+          n.id === id
+            ? { ...n, status: "DISMISSED", unread: false }
+            : n
+        )
+      );
     } catch {}
   };
 

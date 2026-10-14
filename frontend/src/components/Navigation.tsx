@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import notificationService from "../services/notification.service";
 
 const navigationItems = [
   { label: "Dashboard", href: "/dashboard" },
@@ -20,18 +21,42 @@ export default function Navigation() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     // Check dark mode preference
-    const savedTheme = localStorage.getItem("vynk-theme");
+    const savedTheme = typeof window !== "undefined" ? localStorage.getItem("vynk-theme") : null;
     if (savedTheme === "dark") {
       document.documentElement.classList.add("dark");
-      setIsDark(true);
     }
 
     // Check auth status
-    const token = localStorage.getItem("vynk_token");
-    setIsAuthenticated(!!token);
+    const token = typeof window !== "undefined" ? localStorage.getItem("vynk_token") : null;
+    const authed = !!token;
+
+    // Subscribe to live unread count updates
+    let unsubscribe = () => {};
+    if (authed) {
+      unsubscribe = notificationService.subscribeUnreadCount((count) => {
+        setUnreadCount(count);
+      });
+      notificationService.refreshUnreadCount().catch(() => {});
+    }
+
+    queueMicrotask(() => {
+      setIsAuthenticated(authed);
+      if (savedTheme === "dark") {
+        setIsDark(true);
+      }
+      if (!authed) {
+        setUnreadCount(0);
+        notificationService.setUnreadCount(0);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [pathname]);
 
   const toggleTheme = () => {
@@ -48,6 +73,8 @@ export default function Navigation() {
   };
 
   const handleLogout = () => {
+    notificationService.setUnreadCount(0);
+    setUnreadCount(0);
     localStorage.removeItem("vynk_token");
     localStorage.removeItem("vynk_user");
     setIsAuthenticated(false);
@@ -110,7 +137,14 @@ export default function Navigation() {
                 className="relative rounded-xl px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
               >
                 Notifications
-                <span className="ml-1.5 inline-flex h-2 w-2 rounded-full bg-teal-500" />
+                {isAuthenticated && unreadCount > 0 && (
+                  <span
+                    data-testid="notification-badge"
+                    className="ml-1.5 inline-flex items-center justify-center rounded-full bg-teal-500 px-1.5 py-0.5 text-xs font-bold leading-none text-white dark:bg-teal-400 dark:text-slate-950"
+                  >
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
               </Link>
 
               <button
@@ -202,9 +236,17 @@ export default function Navigation() {
                 <Link
                   href="/notifications"
                   onClick={() => setIsMenuOpen(false)}
-                  className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+                  className="flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
-                  Notifications
+                  <span>Notifications</span>
+                  {isAuthenticated && unreadCount > 0 && (
+                    <span
+                      data-testid="mobile-notification-badge"
+                      className="inline-flex items-center justify-center rounded-full bg-teal-500 px-2 py-0.5 text-xs font-bold leading-none text-white dark:bg-teal-400 dark:text-slate-950"
+                    >
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </span>
+                  )}
                 </Link>
               </li>
 
